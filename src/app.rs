@@ -1,5 +1,8 @@
+use gpui::prelude::FluentBuilder;
 use gpui::*;
+use gpui_component::badge::Badge;
 use gpui_component::button::{Button, ButtonVariants};
+use gpui_component::divider::Divider;
 use gpui_component::input::{Input, InputState};
 use gpui_component::scroll::Scrollbar;
 use gpui_component::tab::{Tab, TabBar};
@@ -33,6 +36,16 @@ impl HttpMethod {
             HttpMethod::Put => hsla(0.12, 0.8, 0.50, 1.0), // Orange
             HttpMethod::Delete => hsla(0.0, 0.8, 0.50, 1.0), // Red
             HttpMethod::Patch => hsla(0.75, 0.6, 0.55, 1.0), // Purple
+        }
+    }
+
+    fn bg_color(&self) -> Hsla {
+        match self {
+            HttpMethod::Get => hsla(0.35, 0.4, 0.15, 1.0),
+            HttpMethod::Post => hsla(0.55, 0.4, 0.15, 1.0),
+            HttpMethod::Put => hsla(0.12, 0.4, 0.15, 1.0),
+            HttpMethod::Delete => hsla(0.0, 0.4, 0.15, 1.0),
+            HttpMethod::Patch => hsla(0.75, 0.3, 0.15, 1.0),
         }
     }
 
@@ -74,6 +87,7 @@ pub struct App {
     active_tab: RequestTab,
     is_loading: bool,
     response_status: Option<(u16, String)>,
+    response_time: Option<u128>,
 }
 
 impl App {
@@ -92,10 +106,7 @@ impl App {
         });
 
         // Create initial empty param rows
-        let params = vec![
-            Self::create_kv_pair(window, cx, "key", "value"),
-            Self::create_kv_pair(window, cx, "", ""),
-        ];
+        let params = vec![Self::create_kv_pair(window, cx, "", "")];
 
         // Create initial header rows
         let headers = vec![
@@ -114,6 +125,7 @@ impl App {
             active_tab: RequestTab::Params,
             is_loading: false,
             response_status: None,
+            response_time: None,
         }
     }
 
@@ -221,14 +233,18 @@ impl App {
         self.is_loading = true;
         self.response_status = None;
         self.response_body.clear();
+        self.response_time = None;
         cx.notify();
 
         cx.spawn_in(window, async move |this, cx| {
+            let start = std::time::Instant::now();
             let result = Self::execute_request(&url, &method, &body, &headers).await;
+            let elapsed = start.elapsed().as_millis();
 
             cx.update(|_window, cx| {
                 this.update(cx, |app, cx| {
                     app.is_loading = false;
+                    app.response_time = Some(elapsed);
                     match result {
                         Ok((status, body)) => {
                             let status_text = if status >= 200 && status < 300 {
@@ -303,39 +319,49 @@ impl App {
 
     fn render_title_bar(&self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         TitleBar::new().child(
-            div().flex().items_center().gap_2().child(
-                div()
-                    .text_sm()
-                    .font_weight(FontWeight::BOLD)
-                    .text_color(hsla(0.0, 0.0, 0.95, 1.0))
-                    .child("⚡ API Client"),
-            ),
+            div()
+                .flex()
+                .items_center()
+                .gap_3()
+                .child(Icon::new(IconName::Globe).text_color(hsla(0.55, 0.8, 0.6, 1.0)))
+                .child(
+                    div()
+                        .text_sm()
+                        .font_weight(FontWeight::BOLD)
+                        .text_color(hsla(0.0, 0.0, 0.95, 1.0))
+                        .child("API Client"),
+                )
+                .child(Badge::new().child("v1.0")),
         )
     }
 
     fn render_request_bar(&self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let method = self.method.clone();
         let method_color = method.color();
+        let method_bg = method.bg_color();
         let method_text = method.as_str();
 
         div()
             .flex()
+            .items_center()
             .gap_3()
             .p_4()
-            .bg(hsla(0.0, 0.0, 0.12, 1.0))
-            .border_b_1()
-            .border_color(hsla(0.0, 0.0, 0.2, 1.0))
+            .bg(hsla(0.0, 0.0, 0.11, 1.0))
             .child(
+                // Method selector button with icon
                 div()
                     .id("method-selector")
+                    .flex()
+                    .items_center()
+                    .gap_2()
                     .px_3()
                     .py_2()
-                    .rounded(px(6.0))
-                    .bg(hsla(0.0, 0.0, 0.18, 1.0))
+                    .rounded(px(8.0))
+                    .bg(method_bg)
                     .border_1()
-                    .border_color(hsla(0.0, 0.0, 0.25, 1.0))
+                    .border_color(method_color.opacity(0.3))
                     .cursor_pointer()
-                    .hover(|s| s.bg(hsla(0.0, 0.0, 0.22, 1.0)))
+                    .hover(|s| s.bg(method_bg.opacity(0.8)))
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |this, _, _, cx| {
@@ -349,12 +375,24 @@ impl App {
                             .text_sm()
                             .text_color(method_color)
                             .child(method_text),
-                    ),
+                    )
+                    .child(Icon::new(IconName::ChevronDown).text_color(method_color.opacity(0.7))),
             )
-            .child(div().flex_1().child(Input::new(&self.url_input)))
+            .child(
+                div()
+                    .flex_1()
+                    .px_3()
+                    .py_1()
+                    .rounded(px(8.0))
+                    .bg(hsla(0.0, 0.0, 0.06, 1.0))
+                    .border_1()
+                    .border_color(hsla(0.0, 0.0, 0.2, 1.0))
+                    .child(Input::new(&self.url_input).appearance(false)),
+            )
             .child(
                 Button::new("send")
                     .primary()
+                    .icon(IconName::ArrowRight)
                     .label("Send")
                     .loading(self.is_loading)
                     .on_click(cx.listener(|this, _, window, cx| {
@@ -383,15 +421,30 @@ impl App {
             .count();
 
         div()
-            .bg(hsla(0.0, 0.0, 0.10, 1.0))
+            .flex()
+            .items_center()
+            .px_4()
+            .bg(hsla(0.0, 0.0, 0.09, 1.0))
             .border_b_1()
-            .border_color(hsla(0.0, 0.0, 0.2, 1.0))
+            .border_color(hsla(0.0, 0.0, 0.15, 1.0))
             .child(
                 TabBar::new("request-tabs")
                     .child(
                         Tab::new()
                             .selected(active_tab == RequestTab::Params)
-                            .child(format!("Params ({})", param_count))
+                            .child(div().flex().items_center().gap_2().child("Params").when(
+                                param_count > 0,
+                                |this| {
+                                    this.child(
+                                        div()
+                                            .px_1()
+                                            .rounded(px(4.0))
+                                            .bg(hsla(0.55, 0.5, 0.3, 1.0))
+                                            .text_xs()
+                                            .child(format!("{}", param_count)),
+                                    )
+                                },
+                            ))
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.active_tab = RequestTab::Params;
                                 cx.notify();
@@ -400,7 +453,19 @@ impl App {
                     .child(
                         Tab::new()
                             .selected(active_tab == RequestTab::Headers)
-                            .child(format!("Headers ({})", header_count))
+                            .child(div().flex().items_center().gap_2().child("Headers").when(
+                                header_count > 0,
+                                |this| {
+                                    this.child(
+                                        div()
+                                            .px_1()
+                                            .rounded(px(4.0))
+                                            .bg(hsla(0.12, 0.5, 0.3, 1.0))
+                                            .text_xs()
+                                            .child(format!("{}", header_count)),
+                                    )
+                                },
+                            ))
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.active_tab = RequestTab::Headers;
                                 cx.notify();
@@ -434,13 +499,20 @@ impl App {
         div()
             .id(ElementId::Name(id.into()))
             .flex()
-            .gap_2()
+            .items_center()
+            .gap_3()
             .mb_2()
+            .p_2()
+            .rounded(px(6.0))
+            .bg(hsla(0.0, 0.0, 0.06, 1.0))
+            .border_1()
+            .border_color(hsla(0.0, 0.0, 0.15, 1.0))
             .child(
                 div()
                     .flex_1()
                     .child(Input::new(&pair.key).appearance(false)),
             )
+            .child(div().text_color(hsla(0.0, 0.0, 0.3, 1.0)).child("="))
             .child(
                 div()
                     .flex_1()
@@ -456,12 +528,14 @@ impl App {
                         )
                         .into(),
                     ))
-                    .px_2()
-                    .py_1()
+                    .p_1()
                     .rounded(px(4.0))
                     .cursor_pointer()
-                    .text_color(hsla(0.0, 0.0, 0.5, 1.0))
-                    .hover(|s| s.text_color(hsla(0.0, 0.7, 0.6, 1.0)))
+                    .text_color(hsla(0.0, 0.0, 0.4, 1.0))
+                    .hover(|s| {
+                        s.text_color(hsla(0.0, 0.7, 0.6, 1.0))
+                            .bg(hsla(0.0, 0.5, 0.2, 0.3))
+                    })
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |this, _, _, cx| {
@@ -477,7 +551,7 @@ impl App {
                             cx.notify();
                         }),
                     )
-                    .child("×"),
+                    .child(Icon::new(IconName::Delete)),
             )
     }
 
@@ -500,51 +574,44 @@ impl App {
                     .flex()
                     .flex_col()
                     .child(
-                        // Header row
                         div()
                             .flex()
+                            .items_center()
                             .gap_2()
-                            .mb_3()
-                            .pb_2()
-                            .border_b_1()
-                            .border_color(hsla(0.0, 0.0, 0.2, 1.0))
+                            .mb_4()
+                            .child(Icon::new(IconName::Search).text_color(hsla(0.0, 0.0, 0.5, 1.0)))
                             .child(
                                 div()
-                                    .flex_1()
                                     .text_xs()
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .text_color(hsla(0.0, 0.0, 0.6, 1.0))
-                                    .child("KEY"),
-                            )
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .text_xs()
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .text_color(hsla(0.0, 0.0, 0.6, 1.0))
-                                    .child("VALUE"),
-                            )
-                            .child(div().w(px(30.0))),
+                                    .text_color(hsla(0.0, 0.0, 0.5, 1.0))
+                                    .child("Query parameters will be appended to the URL"),
+                            ),
                     )
                     .children(rows)
                     .child(
                         div()
                             .id("add-param")
+                            .flex()
+                            .items_center()
+                            .gap_2()
                             .mt_2()
                             .px_3()
                             .py_2()
-                            .rounded(px(4.0))
+                            .rounded(px(6.0))
                             .text_sm()
                             .cursor_pointer()
                             .text_color(hsla(0.55, 0.7, 0.5, 1.0))
-                            .hover(|s| s.bg(hsla(0.0, 0.0, 0.15, 1.0)))
+                            .border_1()
+                            .border_color(hsla(0.55, 0.5, 0.3, 0.3))
+                            .hover(|s| s.bg(hsla(0.55, 0.5, 0.2, 0.2)))
                             .on_mouse_down(
                                 MouseButton::Left,
                                 cx.listener(|this, _, window, cx| {
                                     this.add_param(window, cx);
                                 }),
                             )
-                            .child("+ Add Parameter"),
+                            .child(Icon::new(IconName::Plus))
+                            .child("Add Parameter"),
                     )
                     .into_any_element()
             }
@@ -563,48 +630,44 @@ impl App {
                     .child(
                         div()
                             .flex()
+                            .items_center()
                             .gap_2()
-                            .mb_3()
-                            .pb_2()
-                            .border_b_1()
-                            .border_color(hsla(0.0, 0.0, 0.2, 1.0))
+                            .mb_4()
                             .child(
-                                div()
-                                    .flex_1()
-                                    .text_xs()
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .text_color(hsla(0.0, 0.0, 0.6, 1.0))
-                                    .child("KEY"),
+                                Icon::new(IconName::Settings).text_color(hsla(0.0, 0.0, 0.5, 1.0)),
                             )
                             .child(
                                 div()
-                                    .flex_1()
                                     .text_xs()
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .text_color(hsla(0.0, 0.0, 0.6, 1.0))
-                                    .child("VALUE"),
-                            )
-                            .child(div().w(px(30.0))),
+                                    .text_color(hsla(0.0, 0.0, 0.5, 1.0))
+                                    .child("HTTP headers to include in the request"),
+                            ),
                     )
                     .children(rows)
                     .child(
                         div()
                             .id("add-header")
+                            .flex()
+                            .items_center()
+                            .gap_2()
                             .mt_2()
                             .px_3()
                             .py_2()
-                            .rounded(px(4.0))
+                            .rounded(px(6.0))
                             .text_sm()
                             .cursor_pointer()
-                            .text_color(hsla(0.55, 0.7, 0.5, 1.0))
-                            .hover(|s| s.bg(hsla(0.0, 0.0, 0.15, 1.0)))
+                            .text_color(hsla(0.12, 0.7, 0.5, 1.0))
+                            .border_1()
+                            .border_color(hsla(0.12, 0.5, 0.3, 0.3))
+                            .hover(|s| s.bg(hsla(0.12, 0.5, 0.2, 0.2)))
                             .on_mouse_down(
                                 MouseButton::Left,
                                 cx.listener(|this, _, window, cx| {
                                     this.add_header(window, cx);
                                 }),
                             )
-                            .child("+ Add Header"),
+                            .child(Icon::new(IconName::Plus))
+                            .child("Add Header"),
                     )
                     .into_any_element()
             }
@@ -614,19 +677,26 @@ impl App {
                 .flex_col()
                 .child(
                     div()
-                        .mb_2()
-                        .text_xs()
-                        .text_color(hsla(0.0, 0.0, 0.5, 1.0))
-                        .child("Enter JSON body for POST/PUT/PATCH requests"),
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .mb_4()
+                        .child(Icon::new(IconName::File).text_color(hsla(0.0, 0.0, 0.5, 1.0)))
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(hsla(0.0, 0.0, 0.5, 1.0))
+                                .child("Request body for POST, PUT, PATCH requests"),
+                        ),
                 )
                 .child(
                     div()
                         .flex_1()
                         .p_3()
-                        .rounded(px(6.0))
-                        .bg(hsla(0.0, 0.0, 0.06, 1.0))
+                        .rounded(px(8.0))
+                        .bg(hsla(0.0, 0.0, 0.04, 1.0))
                         .border_1()
-                        .border_color(hsla(0.0, 0.0, 0.2, 1.0))
+                        .border_color(hsla(0.0, 0.0, 0.15, 1.0))
                         .child(Input::new(&self.body_input).appearance(false)),
                 )
                 .into_any_element(),
@@ -635,7 +705,7 @@ impl App {
         div()
             .flex_1()
             .p_4()
-            .bg(hsla(0.0, 0.0, 0.08, 1.0))
+            .bg(hsla(0.0, 0.0, 0.07, 1.0))
             .child(content)
     }
 
@@ -645,35 +715,82 @@ impl App {
         _cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let status_badge = if let Some((code, text)) = &self.response_status {
-            let (bg_color, text_color) = if *code >= 200 && *code < 300 {
-                (hsla(0.35, 0.6, 0.25, 1.0), hsla(0.35, 0.8, 0.65, 1.0))
+            let (bg_color, text_color, icon) = if *code >= 200 && *code < 300 {
+                (
+                    hsla(0.35, 0.6, 0.25, 1.0),
+                    hsla(0.35, 0.8, 0.65, 1.0),
+                    IconName::Check,
+                )
             } else if *code >= 400 {
-                (hsla(0.0, 0.6, 0.25, 1.0), hsla(0.0, 0.8, 0.65, 1.0))
+                (
+                    hsla(0.0, 0.6, 0.25, 1.0),
+                    hsla(0.0, 0.8, 0.65, 1.0),
+                    IconName::Close,
+                )
+            } else if *code == 0 {
+                (
+                    hsla(0.0, 0.6, 0.25, 1.0),
+                    hsla(0.0, 0.8, 0.65, 1.0),
+                    IconName::TriangleAlert,
+                )
             } else {
-                (hsla(0.0, 0.0, 0.2, 1.0), hsla(0.0, 0.0, 0.7, 1.0))
+                (
+                    hsla(0.12, 0.6, 0.25, 1.0),
+                    hsla(0.12, 0.8, 0.65, 1.0),
+                    IconName::Info,
+                )
             };
 
             div()
                 .flex()
                 .items_center()
-                .gap_2()
+                .gap_3()
                 .child(
                     div()
+                        .flex()
+                        .items_center()
+                        .gap_1()
                         .px_2()
                         .py_1()
-                        .rounded(px(4.0))
+                        .rounded(px(6.0))
                         .bg(bg_color)
-                        .text_xs()
-                        .font_weight(FontWeight::BOLD)
-                        .text_color(text_color)
-                        .child(format!("{} {}", code, text)),
+                        .child(Icon::new(icon).text_color(text_color))
+                        .child(
+                            div()
+                                .text_xs()
+                                .font_weight(FontWeight::BOLD)
+                                .text_color(text_color)
+                                .child(format!("{} {}", code, text)),
+                        ),
                 )
+                .when(self.response_time.is_some(), |this| {
+                    this.child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_1()
+                            .px_2()
+                            .py_1()
+                            .rounded(px(6.0))
+                            .bg(hsla(0.0, 0.0, 0.15, 1.0))
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(hsla(0.0, 0.0, 0.6, 1.0))
+                                    .child(format!("{}ms", self.response_time.unwrap_or(0))),
+                            ),
+                    )
+                })
                 .into_any_element()
         } else {
             div()
+                .flex()
+                .items_center()
+                .gap_2()
                 .text_sm()
-                .text_color(hsla(0.0, 0.0, 0.5, 1.0))
-                .child("No response yet")
+                .text_color(hsla(0.0, 0.0, 0.4, 1.0))
+                .child(Icon::new(IconName::Info))
+                .child("Send a request to see the response")
                 .into_any_element()
         };
 
@@ -691,7 +808,7 @@ impl App {
                     .id(ElementId::Name(format!("line-{}", i).into()))
                     .text_xs()
                     .font_family("monospace")
-                    .text_color(hsla(0.0, 0.0, 0.85, 1.0))
+                    .text_color(hsla(0.0, 0.0, 0.8, 1.0))
                     .child(line_content)
             })
             .collect();
@@ -701,24 +818,30 @@ impl App {
             .flex()
             .flex_col()
             .min_h(px(200.0))
-            .bg(hsla(0.0, 0.0, 0.06, 1.0))
-            .border_t_1()
-            .border_color(hsla(0.0, 0.0, 0.2, 1.0))
+            .bg(hsla(0.0, 0.0, 0.05, 1.0))
+            .child(Divider::horizontal())
             .child(
                 div()
                     .flex()
                     .items_center()
-                    .gap_2()
+                    .justify_between()
                     .p_3()
-                    .bg(hsla(0.0, 0.0, 0.10, 1.0))
-                    .border_b_1()
-                    .border_color(hsla(0.0, 0.0, 0.2, 1.0))
+                    .bg(hsla(0.0, 0.0, 0.08, 1.0))
                     .child(
                         div()
-                            .text_sm()
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(hsla(0.0, 0.0, 0.8, 1.0))
-                            .child("Response"),
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                Icon::new(IconName::ArrowDown).text_color(hsla(0.0, 0.0, 0.6, 1.0)),
+                            )
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(hsla(0.0, 0.0, 0.8, 1.0))
+                                    .child("Response"),
+                            ),
                     )
                     .child(status_badge),
             )
@@ -729,7 +852,7 @@ impl App {
                     .overflow_y_scroll()
                     .track_scroll(&self.scroll_handle)
                     .p_4()
-                    .bg(hsla(0.0, 0.0, 0.04, 1.0))
+                    .bg(hsla(0.0, 0.0, 0.03, 1.0))
                     .children(response_lines),
             )
             .child(Scrollbar::vertical(&self.scroll_handle))
@@ -753,7 +876,7 @@ impl Render for App {
             .size_full()
             .flex()
             .flex_col()
-            .bg(hsla(0.0, 0.0, 0.08, 1.0))
+            .bg(hsla(0.0, 0.0, 0.07, 1.0))
             .text_color(hsla(0.0, 0.0, 0.9, 1.0))
             .font_family("Inter, SF Pro Display, system-ui, sans-serif")
             .child(self.render_title_bar(window, cx))
