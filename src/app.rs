@@ -6,6 +6,7 @@ use gpui_component::divider::Divider;
 use gpui_component::input::{Input, InputState};
 use gpui_component::scroll::{ScrollableElement, Scrollbar};
 use gpui_component::tab::{Tab, TabBar};
+use gpui_component::theme::ActiveTheme;
 use gpui_component::*;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -557,9 +558,9 @@ impl App {
             .h_full()
             .flex()
             .flex_col()
-            .bg(hsla(0.0, 0.0, 0.05, 1.0))
+            .bg(cx.theme().secondary)
             .border_r_1()
-            .border_color(hsla(0.0, 0.0, 0.15, 1.0))
+            .border_color(cx.theme().border)
             // Header
             .child(
                 div()
@@ -567,8 +568,9 @@ impl App {
                     .items_center()
                     .justify_between()
                     .p_3()
+                    .p_3()
                     .border_b_1()
-                    .border_color(hsla(0.0, 0.0, 0.15, 1.0))
+                    .border_color(cx.theme().border)
                     .child(
                         div()
                             .flex()
@@ -581,8 +583,9 @@ impl App {
                             .child(
                                 div()
                                     .text_sm()
+                                    .text_sm()
                                     .font_weight(FontWeight::SEMIBOLD)
-                                    .text_color(hsla(0.0, 0.0, 0.8, 1.0))
+                                    .text_color(cx.theme().foreground)
                                     .child("Requests"),
                             ),
                     )
@@ -592,7 +595,10 @@ impl App {
                             .p_1()
                             .rounded(px(4.0))
                             .cursor_pointer()
-                            .hover(|s| s.bg(hsla(0.0, 0.0, 0.15, 1.0)))
+                            .p_1()
+                            .rounded(px(4.0))
+                            .cursor_pointer()
+                            .hover(|s| s.bg(cx.theme().accent))
                             .on_mouse_down(
                                 MouseButton::Left,
                                 cx.listener(|this, _, window, cx| {
@@ -692,21 +698,39 @@ impl App {
             })
     }
 
-    fn render_title_bar(&self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_title_bar(&self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         TitleBar::new().child(
             div()
                 .flex()
                 .items_center()
                 .gap_3()
-                .child(Icon::new(IconName::Globe).text_color(hsla(0.55, 0.8, 0.6, 1.0)))
+                .child(Icon::new(IconName::Globe).text_color(cx.theme().primary))
                 .child(
                     div()
                         .text_sm()
                         .font_weight(FontWeight::BOLD)
-                        .text_color(hsla(0.0, 0.0, 0.95, 1.0))
                         .child("API Client"),
                 )
-                .child(Badge::new().child("v1.0")),
+                .child(Badge::new().child("v0.1.0"))
+                .child(
+                    div()
+                        .cursor_pointer()
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|this, _, _, cx| {
+                                this.sidebar_visible = !this.sidebar_visible;
+                                cx.notify();
+                            }),
+                        )
+                        .child(
+                            Icon::new(if self.sidebar_visible {
+                                IconName::PanelLeftClose
+                            } else {
+                                IconName::PanelLeftOpen
+                            })
+                            .text_color(cx.theme().muted_foreground),
+                        ),
+                ),
         )
     }
 
@@ -737,7 +761,7 @@ impl App {
             .flex_col()
             .gap_3()
             .p_4()
-            .bg(hsla(0.0, 0.0, 0.11, 1.0))
+            .bg(cx.theme().secondary)
             // Row 1: Name Input
             .child(
                 div()
@@ -748,7 +772,7 @@ impl App {
                         div()
                             .text_sm()
                             .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(hsla(0.0, 0.0, 0.6, 1.0))
+                            .text_color(cx.theme().muted_foreground)
                             .child("Name"),
                     )
                     .child(
@@ -757,9 +781,9 @@ impl App {
                             .px_3()
                             .py_1()
                             .rounded(px(8.0))
-                            .bg(hsla(0.0, 0.0, 0.06, 1.0))
+                            .bg(cx.theme().input)
                             .border_1()
-                            .border_color(hsla(0.0, 0.0, 0.2, 1.0))
+                            .border_color(cx.theme().border)
                             .child(Input::new(&self.name_input).appearance(false)),
                     ),
             )
@@ -809,9 +833,9 @@ impl App {
                             .px_3()
                             .py_1()
                             .rounded(px(8.0))
-                            .bg(hsla(0.0, 0.0, 0.06, 1.0))
+                            .bg(cx.theme().input)
                             .border_1()
-                            .border_color(hsla(0.0, 0.0, 0.2, 1.0))
+                            .border_color(cx.theme().border)
                             .child(Input::new(&self.url_input).appearance(false)),
                     )
                     .child(
@@ -1323,8 +1347,8 @@ impl Render for App {
             .size_full()
             .flex()
             .flex_col()
-            .bg(hsla(0.0, 0.0, 0.07, 1.0))
-            .text_color(hsla(0.0, 0.0, 0.9, 1.0))
+            .bg(cx.theme().background)
+            .text_color(cx.theme().foreground)
             .font_family("Inter, SF Pro Display, system-ui, sans-serif")
             .child(self.render_title_bar(window, cx))
             .child(
