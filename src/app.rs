@@ -4,9 +4,11 @@ use gpui_component::badge::Badge;
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::divider::Divider;
 use gpui_component::input::{Input, InputState};
-use gpui_component::scroll::Scrollbar;
+use gpui_component::scroll::{ScrollableElement, Scrollbar};
 use gpui_component::tab::{Tab, TabBar};
 use gpui_component::*;
+use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
 /// HTTP Methods supported by the client
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -76,6 +78,26 @@ pub struct KeyValuePair {
     enabled: bool,
 }
 
+/// Saved request file format
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SavedRequest {
+    pub name: String,
+    pub method: String,
+    pub url: String,
+    #[serde(default)]
+    pub headers: std::collections::HashMap<String, String>,
+    #[serde(default)]
+    pub body: String,
+}
+
+/// Sidebar file entry
+#[derive(Clone, Debug)]
+pub struct FileEntry {
+    pub name: String,
+    pub path: PathBuf,
+    pub method: Option<HttpMethod>,
+}
+
 pub struct App {
     url_input: Entity<InputState>,
     body_input: Entity<InputState>,
@@ -83,11 +105,17 @@ pub struct App {
     headers: Vec<KeyValuePair>,
     response_body: String,
     scroll_handle: ScrollHandle,
+    sidebar_scroll: ScrollHandle,
     method: HttpMethod,
     active_tab: RequestTab,
     is_loading: bool,
     response_status: Option<(u16, String)>,
     response_time: Option<u128>,
+    // Sidebar state
+    sidebar_visible: bool,
+    current_folder: Option<PathBuf>,
+    saved_requests: Vec<FileEntry>,
+    selected_request: Option<usize>,
 }
 
 impl App {
@@ -121,11 +149,17 @@ impl App {
             headers,
             response_body: String::new(),
             scroll_handle: ScrollHandle::new(),
+            sidebar_scroll: ScrollHandle::new(),
             method: HttpMethod::Get,
             active_tab: RequestTab::Params,
             is_loading: false,
             response_status: None,
             response_time: None,
+            // Sidebar state
+            sidebar_visible: true,
+            current_folder: None,
+            saved_requests: Vec::new(),
+            selected_request: None,
         }
     }
 
@@ -315,6 +349,267 @@ impl App {
         let text = response.text().await.map_err(|e| e.to_string())?;
 
         Ok((status, text))
+    }
+
+    /// Open folder dialog and load requests
+    fn open_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // Spawn async task to show folder picker
+        cx.spawn_in(window, async move |this, cx| {
+            // Show native folder picker dialog
+            let folder = rfd::AsyncFileDialog::new()
+                .set_title("Select Requests Folder")
+                .pick_folder()
+                .await;
+
+            if let Some(folder) = folder {
+                let path = folder.path().to_path_buf();
+                cx.update(|_window, cx| {
+                    this.update(cx, |app, cx| {
+                        app.current_folder = Some(path);
+                        app.load_folder(cx);
+                        cx.notify();
+                    });
+                });
+            }
+        })
+        .detach();
+    }
+
+    /// Load requests from current folder
+    fn load_folder(&mut self, _cx: &mut Context<Self>) {
+        self.saved_requests.clear();
+
+        if let Some(folder) = &self.current_folder {
+            if let Ok(entries) = std::fs::read_dir(folder) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.is_file() {
+                        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+                        if ext == "json" || ext == "yaml" || ext == "yml" {
+                            // Try to parse the method from the file
+                            let method = Self::parse_method_from_file(&path);
+                            let name = path
+                                .file_stem()
+                                .and_then(|n| n.to_str())
+                                .unwrap_or("Unknown")
+                                .to_string();
+
+                            self.saved_requests.push(FileEntry { name, path, method });
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Parse HTTP method from a saved request file
+    fn parse_method_from_file(path: &PathBuf) -> Option<HttpMethod> {
+        if let Ok(content) = std::fs::read_to_string(path) {
+            if let Ok(request) = serde_json::from_str::<SavedRequest>(&content) {
+                return match request.method.to_uppercase().as_str() {
+                    "GET" => Some(HttpMethod::Get),
+                    "POST" => Some(HttpMethod::Post),
+                    "PUT" => Some(HttpMethod::Put),
+                    "DELETE" => Some(HttpMethod::Delete),
+                    "PATCH" => Some(HttpMethod::Patch),
+                    _ => None,
+                };
+            }
+        }
+        None
+    }
+
+    /// Load a saved request into the editor
+    fn load_request(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(entry) = self.saved_requests.get(index) {
+            if let Ok(content) = std::fs::read_to_string(&entry.path) {
+                if let Ok(request) = serde_json::from_str::<SavedRequest>(&content) {
+                    // Set method
+                    self.method = match request.method.to_uppercase().as_str() {
+                        "GET" => HttpMethod::Get,
+                        "POST" => HttpMethod::Post,
+                        "PUT" => HttpMethod::Put,
+                        "DELETE" => HttpMethod::Delete,
+                        "PATCH" => HttpMethod::Patch,
+                        _ => HttpMethod::Get,
+                    };
+
+                    // Set URL
+                    self.url_input.update(cx, |state, cx| {
+                        state.set_value(&request.url, window, cx);
+                    });
+
+                    // Set body
+                    if !request.body.is_empty() {
+                        self.body_input.update(cx, |state, cx| {
+                            state.set_value(&request.body, window, cx);
+                        });
+                    }
+
+                    // Clear and set headers
+                    self.headers.clear();
+                    for (key, value) in request.headers.iter() {
+                        self.headers
+                            .push(Self::create_kv_pair(window, cx, key, value));
+                    }
+                    // Add empty row for new headers
+                    self.headers.push(Self::create_kv_pair(window, cx, "", ""));
+
+                    self.selected_request = Some(index);
+                    cx.notify();
+                }
+            }
+        }
+    }
+
+    /// Render the sidebar
+    fn render_sidebar(&self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let folder_name: String = self
+            .current_folder
+            .as_ref()
+            .and_then(|p| p.file_name())
+            .and_then(|n| n.to_str())
+            .unwrap_or("No folder")
+            .to_string();
+
+        div()
+            .w(px(240.0))
+            .h_full()
+            .flex()
+            .flex_col()
+            .bg(hsla(0.0, 0.0, 0.05, 1.0))
+            .border_r_1()
+            .border_color(hsla(0.0, 0.0, 0.15, 1.0))
+            // Header
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .p_3()
+                    .border_b_1()
+                    .border_color(hsla(0.0, 0.0, 0.15, 1.0))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                Icon::new(IconName::FolderOpen)
+                                    .text_color(hsla(0.12, 0.7, 0.5, 1.0)),
+                            )
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(hsla(0.0, 0.0, 0.8, 1.0))
+                                    .child("Requests"),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .id("open-folder-btn")
+                            .p_1()
+                            .rounded(px(4.0))
+                            .cursor_pointer()
+                            .hover(|s| s.bg(hsla(0.0, 0.0, 0.15, 1.0)))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, _, window, cx| {
+                                    this.open_folder(window, cx);
+                                    cx.notify();
+                                }),
+                            )
+                            .child(
+                                Icon::new(IconName::FolderOpen)
+                                    .text_color(hsla(0.0, 0.0, 0.5, 1.0)),
+                            ),
+                    ),
+            )
+            // Folder path
+            .child(
+                div()
+                    .px_3()
+                    .py_2()
+                    .text_xs()
+                    .text_color(hsla(0.0, 0.0, 0.5, 1.0))
+                    .child(folder_name),
+            )
+            // File list
+            .child(div().flex_1().overflow_y_scrollbar().children(
+                self.saved_requests.iter().enumerate().map(|(i, entry)| {
+                    let is_selected = self.selected_request == Some(i);
+                    let method_color = entry
+                        .method
+                        .as_ref()
+                        .map(|m| m.color())
+                        .unwrap_or(hsla(0.0, 0.0, 0.5, 1.0));
+                    let method_str = entry.method.as_ref().map(|m| m.as_str()).unwrap_or("???");
+                    let name = entry.name.clone();
+
+                    div()
+                        .id(ElementId::Name(format!("request-{}", i).into()))
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .px_3()
+                        .py_2()
+                        .cursor_pointer()
+                        .bg(if is_selected {
+                            hsla(0.55, 0.4, 0.2, 1.0)
+                        } else {
+                            hsla(0.0, 0.0, 0.0, 0.0)
+                        })
+                        .hover(|s| s.bg(hsla(0.0, 0.0, 0.1, 1.0)))
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |this, _, window, cx| {
+                                this.load_request(i, window, cx);
+                            }),
+                        )
+                        .child(
+                            div()
+                                .text_xs()
+                                .font_weight(FontWeight::BOLD)
+                                .text_color(method_color)
+                                .min_w(px(40.0))
+                                .child(method_str),
+                        )
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(hsla(0.0, 0.0, 0.8, 1.0))
+                                .overflow_x_hidden()
+                                .child(name),
+                        )
+                }),
+            ))
+            // Empty state
+            .when(self.saved_requests.is_empty(), |this| {
+                this.child(
+                    div()
+                        .flex_1()
+                        .flex()
+                        .flex_col()
+                        .items_center()
+                        .justify_center()
+                        .gap_2()
+                        .p_4()
+                        .child(Icon::new(IconName::FolderOpen).text_color(hsla(0.0, 0.0, 0.3, 1.0)))
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(hsla(0.0, 0.0, 0.4, 1.0))
+                                .child("No requests"),
+                        )
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(hsla(0.0, 0.0, 0.3, 1.0))
+                                .child("Click folder icon to open"),
+                        ),
+                )
+            })
     }
 
     fn render_title_bar(&self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
@@ -849,8 +1144,7 @@ impl App {
                 div()
                     .id("response-scroll")
                     .flex_1()
-                    .overflow_y_scroll()
-                    .track_scroll(&self.scroll_handle)
+                    .overflow_y_scrollbar()
                     .p_4()
                     .bg(hsla(0.0, 0.0, 0.03, 1.0))
                     .children(response_lines),
@@ -880,9 +1174,28 @@ impl Render for App {
             .text_color(hsla(0.0, 0.0, 0.9, 1.0))
             .font_family("Inter, SF Pro Display, system-ui, sans-serif")
             .child(self.render_title_bar(window, cx))
-            .child(self.render_request_bar(window, cx))
-            .child(self.render_tabs(window, cx))
-            .child(self.render_request_panel(window, cx))
-            .child(self.render_response_panel(window, cx))
+            .child(
+                // Main content area with sidebar
+                div()
+                    .flex_1()
+                    .flex()
+                    .overflow_hidden()
+                    // Sidebar
+                    .when(self.sidebar_visible, |this| {
+                        this.child(self.render_sidebar(window, cx))
+                    })
+                    // Main panel
+                    .child(
+                        div()
+                            .flex_1()
+                            .flex()
+                            .flex_col()
+                            .overflow_hidden()
+                            .child(self.render_request_bar(window, cx))
+                            .child(self.render_tabs(window, cx))
+                            .child(self.render_request_panel(window, cx))
+                            .child(self.render_response_panel(window, cx)),
+                    ),
+            )
     }
 }
