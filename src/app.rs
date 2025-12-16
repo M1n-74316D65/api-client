@@ -1434,6 +1434,7 @@ impl Render for App {
                     .child(
                         resizable_panel()
                             .size(px(250.0))
+                            .visible(self.sidebar_visible)
                             .child(self.render_sidebar(window, cx)),
                     )
                     .child(
