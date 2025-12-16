@@ -743,38 +743,72 @@ impl App {
     }
 
     fn render_title_bar(&self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let folder_name = self
+            .current_folder
+            .as_ref()
+            .and_then(|p| p.file_name())
+            .and_then(|n| n.to_str())
+            .unwrap_or("");
+
         TitleBar::new().child(
             div()
+                .w_full()
                 .flex()
                 .items_center()
-                .gap_3()
-                .child(Icon::new(IconName::Globe).text_color(cx.theme().primary))
+                .justify_between()
+                .px_4()
+                .pl_20() // Padding for traffic lights
+                .on_mouse_down(MouseButton::Left, |_, window, _| window.start_window_move())
+                // Left Section: Toggle + Logo
                 .child(
                     div()
-                        .text_sm()
-                        .font_weight(FontWeight::BOLD)
-                        .child("API Client"),
-                )
-                .child(Badge::new().child("v0.1.0"))
-                .child(
-                    div()
-                        .cursor_pointer()
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(|this, _, _, cx| {
-                                this.sidebar_visible = !this.sidebar_visible;
-                                cx.notify();
-                            }),
-                        )
+                        .flex()
+                        .items_center()
+                        .gap_3()
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation()) // Prevent drag on controls
                         .child(
-                            Icon::new(if self.sidebar_visible {
-                                IconName::PanelLeftClose
-                            } else {
-                                IconName::PanelLeftOpen
-                            })
-                            .text_color(cx.theme().muted_foreground),
+                            div()
+                                .cursor_pointer()
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|this, _, _, cx| {
+                                        this.sidebar_visible = !this.sidebar_visible;
+                                        cx.notify();
+                                    }),
+                                )
+                                .child(
+                                    Icon::new(if self.sidebar_visible {
+                                        IconName::PanelLeftClose
+                                    } else {
+                                        IconName::PanelLeftOpen
+                                    })
+                                    .text_color(cx.theme().muted_foreground),
+                                ),
+                        )
+                        .child(Icon::new(IconName::Globe).text_color(cx.theme().primary))
+                        .child(
+                            div()
+                                .text_sm()
+                                .font_weight(FontWeight::BOLD)
+                                .child("API Client"),
                         ),
-                ),
+                )
+                // Center Section: Workspace Info
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(if folder_name.is_empty() {
+                            "No folder opened".to_string()
+                        } else {
+                            format!("Workspace: {}", folder_name)
+                        }),
+                )
+                // Right Section: Version
+                .child(Badge::new().child("v0.1.0")),
         )
     }
 

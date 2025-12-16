@@ -16,7 +16,15 @@ fn main() {
         gpui_component::init(cx);
 
         cx.spawn(async move |cx| {
-            cx.open_window(WindowOptions::default(), |window, cx| {
+            let options = WindowOptions {
+                titlebar: Some(TitlebarOptions {
+                    title: None,
+                    appears_transparent: true,
+                    traffic_light_position: Some(gpui::point(px(8.0), px(8.0))),
+                }),
+                ..Default::default()
+            };
+            cx.open_window(options, |window, cx| {
                 let view = cx.new(|cx| App::new(window, cx));
                 // This first level on the window, should be a Root.
                 cx.new(|cx| Root::new(view, window, cx))
