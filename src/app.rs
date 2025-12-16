@@ -11,6 +11,40 @@ use gpui_component::*;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+/// Application configuration
+#[derive(Debug, Serialize, Deserialize, Default)]
+struct AppConfig {
+    last_opened_folder: Option<PathBuf>,
+}
+
+impl AppConfig {
+    fn path() -> PathBuf {
+        dirs::config_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("api-client")
+            .join("config.json")
+    }
+
+    fn load() -> Self {
+        let path = Self::path();
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            serde_json::from_str(&content).unwrap_or_default()
+        } else {
+            Self::default()
+        }
+    }
+
+    fn save(&self) {
+        let path = Self::path();
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if let Ok(content) = serde_json::to_string_pretty(self) {
+            let _ = std::fs::write(path, content);
+        }
+    }
+}
+
 /// HTTP Methods supported by the client
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum HttpMethod {
@@ -151,6 +185,15 @@ impl App {
             Self::create_kv_pair(window, cx, "", ""),
         ];
 
+        // Load config
+        let config = AppConfig::load();
+        let current_folder = config.last_opened_folder;
+        let saved_requests = if let Some(folder) = &current_folder {
+            Self::scan_folder(folder)
+        } else {
+            Vec::new()
+        };
+
         Self {
             url_input,
             name_input,
@@ -167,8 +210,8 @@ impl App {
             response_time: None,
             // Sidebar state
             sidebar_visible: true,
-            current_folder: None,
-            saved_requests: Vec::new(),
+            current_folder,
+            saved_requests,
             selected_request: None,
         }
     }
@@ -374,44 +417,57 @@ impl App {
                 .pick_folder()
                 .await;
 
-            if let Some(folder) = folder {
-                let path = folder.path().to_path_buf();
-                cx.update(|_window, cx| {
-                    this.update(cx, |app, cx| {
-                        app.current_folder = Some(path);
-                        app.load_folder(cx);
-                        cx.notify();
-                    });
+            if let Some(path) = folder.map(|f| f.path().to_path_buf()) {
+                let _ = this.update(cx, |app, cx| {
+                    app.current_folder = Some(path.clone());
+
+                    // Save config
+                    let config = AppConfig {
+                        last_opened_folder: Some(path),
+                    };
+                    config.save();
+
+                    app.load_folder(cx);
+                    cx.notify();
                 });
             }
         })
         .detach();
     }
 
-    /// Load requests from current folder
-    fn load_folder(&mut self, _cx: &mut Context<Self>) {
-        self.saved_requests.clear();
+    /// Scan folder for request files
+    fn scan_folder(folder: &PathBuf) -> Vec<FileEntry> {
+        let mut saved_requests = Vec::new();
+        if let Ok(entries) = std::fs::read_dir(folder) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file() {
+                    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+                    if ext == "json" || ext == "yaml" || ext == "yml" {
+                        // Try to parse the method from the file
+                        let method = Self::parse_method_from_file(&path);
+                        let name = path
+                            .file_stem()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or("Unknown")
+                            .to_string();
 
-        if let Some(folder) = &self.current_folder {
-            if let Ok(entries) = std::fs::read_dir(folder) {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    if path.is_file() {
-                        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-                        if ext == "json" || ext == "yaml" || ext == "yml" {
-                            // Try to parse the method from the file
-                            let method = Self::parse_method_from_file(&path);
-                            let name = path
-                                .file_stem()
-                                .and_then(|n| n.to_str())
-                                .unwrap_or("Unknown")
-                                .to_string();
-
-                            self.saved_requests.push(FileEntry { name, path, method });
-                        }
+                        saved_requests.push(FileEntry { name, path, method });
                     }
                 }
             }
+        }
+        // sort by name
+        saved_requests.sort_by(|a, b| a.name.cmp(&b.name));
+        saved_requests
+    }
+
+    /// Load requests from current folder
+    fn load_folder(&mut self, _cx: &mut Context<Self>) {
+        if let Some(folder) = &self.current_folder {
+            self.saved_requests = Self::scan_folder(folder);
+        } else {
+            self.saved_requests.clear();
         }
     }
 
