@@ -925,6 +925,7 @@ impl App {
                                 Button::new("save-req")
                                     .icon(IconName::File)
                                     .label("Save")
+                                    .w_full()
                                     .on_click(cx.listener(|this, _, window, cx| {
                                         this.save_request(window, cx);
                                     })),
@@ -933,6 +934,7 @@ impl App {
                                 Button::new("save-new-req")
                                     .icon(IconName::Plus)
                                     .label("New")
+                                    .ghost()
                                     .on_click(cx.listener(|this, _, window, cx| {
                                         this.save_new_request(window, cx);
                                     })),
@@ -1069,39 +1071,28 @@ impl App {
                     .child(Input::new(&pair.value).appearance(false)),
             )
             .child(
-                div()
-                    .id(ElementId::Name(
-                        format!(
-                            "delete-{}-{}",
-                            if is_param { "param" } else { "header" },
-                            index
-                        )
-                        .into(),
-                    ))
-                    .p_1()
-                    .rounded(px(4.0))
-                    .cursor_pointer()
-                    .text_color(hsla(0.0, 0.0, 0.4, 1.0))
-                    .hover(|s| {
-                        s.text_color(hsla(0.0, 0.7, 0.6, 1.0))
-                            .bg(hsla(0.0, 0.5, 0.2, 0.3))
-                    })
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |this, _, _, cx| {
-                            if is_param {
-                                if this.params.len() > 1 {
-                                    this.params.remove(index);
-                                }
-                            } else {
-                                if this.headers.len() > 1 {
-                                    this.headers.remove(index);
-                                }
-                            }
-                            cx.notify();
-                        }),
+                Button::new(ElementId::Name(
+                    format!(
+                        "delete-{}-{}",
+                        if is_param { "param" } else { "header" },
+                        index
                     )
-                    .child(Icon::new(IconName::Delete)),
+                    .into(),
+                ))
+                .icon(IconName::Delete)
+                .ghost()
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    if is_param {
+                        if this.params.len() > 1 {
+                            this.params.remove(index);
+                        }
+                    } else {
+                        if this.headers.len() > 1 {
+                            this.headers.remove(index);
+                        }
+                    }
+                    cx.notify();
+                })),
             )
     }
 
@@ -1139,29 +1130,14 @@ impl App {
                     )
                     .children(rows)
                     .child(
-                        div()
-                            .id("add-param")
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .mt_2()
-                            .px_3()
-                            .py_2()
-                            .rounded(px(6.0))
-                            .text_sm()
-                            .cursor_pointer()
-                            .text_color(hsla(0.55, 0.7, 0.5, 1.0))
-                            .border_1()
-                            .border_color(hsla(0.55, 0.5, 0.3, 0.3))
-                            .hover(|s| s.bg(hsla(0.55, 0.5, 0.2, 0.2)))
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(|this, _, window, cx| {
-                                    this.add_param(window, cx);
-                                }),
-                            )
-                            .child(Icon::new(IconName::Plus))
-                            .child("Add Parameter"),
+                        Button::new("add-param")
+                            .icon(IconName::Plus)
+                            .label("Add Parameter")
+                            .outline()
+                            .w_full()
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.add_param(window, cx);
+                            })),
                     )
                     .into_any_element()
             }
@@ -1195,29 +1171,14 @@ impl App {
                     )
                     .children(rows)
                     .child(
-                        div()
-                            .id("add-header")
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .mt_2()
-                            .px_3()
-                            .py_2()
-                            .rounded(px(6.0))
-                            .text_sm()
-                            .cursor_pointer()
-                            .text_color(hsla(0.12, 0.7, 0.5, 1.0))
-                            .border_1()
-                            .border_color(hsla(0.12, 0.5, 0.3, 0.3))
-                            .hover(|s| s.bg(hsla(0.12, 0.5, 0.2, 0.2)))
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(|this, _, window, cx| {
-                                    this.add_header(window, cx);
-                                }),
-                            )
-                            .child(Icon::new(IconName::Plus))
-                            .child("Add Header"),
+                        Button::new("add-header")
+                            .icon(IconName::Plus)
+                            .label("Add Header")
+                            .outline()
+                            .w_full()
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.add_header(window, cx);
+                            })),
                     )
                     .into_any_element()
             }
