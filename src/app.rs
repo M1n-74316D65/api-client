@@ -55,10 +55,19 @@ pub enum RequestTab {
     Body,
 }
 
+/// Key-Value pair for params and headers
+#[derive(Clone)]
+pub struct KeyValuePair {
+    key: Entity<InputState>,
+    value: Entity<InputState>,
+    enabled: bool,
+}
+
 pub struct App {
     url_input: Entity<InputState>,
     body_input: Entity<InputState>,
-    headers_input: Entity<InputState>,
+    params: Vec<KeyValuePair>,
+    headers: Vec<KeyValuePair>,
     response_body: String,
     scroll_handle: ScrollHandle,
     method: HttpMethod,
@@ -78,20 +87,27 @@ impl App {
 
         let body_input = cx.new(|cx| {
             let mut state = InputState::new(window, cx);
-            state.set_placeholder("Request body (JSON)...", window, cx);
+            state.set_placeholder("Enter JSON body...", window, cx);
             state
         });
 
-        let headers_input = cx.new(|cx| {
-            let mut state = InputState::new(window, cx);
-            state.set_placeholder("Headers (Key: Value)", window, cx);
-            state
-        });
+        // Create initial empty param rows
+        let params = vec![
+            Self::create_kv_pair(window, cx, "key", "value"),
+            Self::create_kv_pair(window, cx, "", ""),
+        ];
+
+        // Create initial header rows
+        let headers = vec![
+            Self::create_kv_pair(window, cx, "Content-Type", "application/json"),
+            Self::create_kv_pair(window, cx, "", ""),
+        ];
 
         Self {
             url_input,
             body_input,
-            headers_input,
+            params,
+            headers,
             response_body: String::new(),
             scroll_handle: ScrollHandle::new(),
             method: HttpMethod::Get,
@@ -101,10 +117,101 @@ impl App {
         }
     }
 
+    fn create_kv_pair(
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        key: &str,
+        value: &str,
+    ) -> KeyValuePair {
+        let key_owned = key.to_string();
+        let value_owned = value.to_string();
+
+        let key_input = cx.new(|cx| {
+            let mut state = InputState::new(window, cx);
+            state.set_placeholder("Key", window, cx);
+            if !key_owned.is_empty() {
+                state.set_value(&key_owned, window, cx);
+            }
+            state
+        });
+        let value_input = cx.new(|cx| {
+            let mut state = InputState::new(window, cx);
+            state.set_placeholder("Value", window, cx);
+            if !value_owned.is_empty() {
+                state.set_value(&value_owned, window, cx);
+            }
+            state
+        });
+        KeyValuePair {
+            key: key_input,
+            value: value_input,
+            enabled: true,
+        }
+    }
+
+    fn add_param(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let pair = Self::create_kv_pair(window, cx, "", "");
+        self.params.push(pair);
+        cx.notify();
+    }
+
+    fn add_header(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let pair = Self::create_kv_pair(window, cx, "", "");
+        self.headers.push(pair);
+        cx.notify();
+    }
+
+    fn build_url_with_params(&self, cx: &Context<Self>) -> String {
+        let base_url = self.url_input.read(cx).value().to_string();
+
+        let params: Vec<(String, String)> = self
+            .params
+            .iter()
+            .filter(|p| p.enabled)
+            .map(|p| {
+                (
+                    p.key.read(cx).value().to_string(),
+                    p.value.read(cx).value().to_string(),
+                )
+            })
+            .filter(|(k, _)| !k.is_empty())
+            .collect();
+
+        if params.is_empty() {
+            return base_url;
+        }
+
+        let query = params
+            .iter()
+            .map(|(k, v)| format!("{}={}", urlencoding(k), urlencoding(v)))
+            .collect::<Vec<_>>()
+            .join("&");
+
+        if base_url.contains('?') {
+            format!("{}&{}", base_url, query)
+        } else {
+            format!("{}?{}", base_url, query)
+        }
+    }
+
+    fn get_headers(&self, cx: &Context<Self>) -> Vec<(String, String)> {
+        self.headers
+            .iter()
+            .filter(|h| h.enabled)
+            .map(|h| {
+                (
+                    h.key.read(cx).value().to_string(),
+                    h.value.read(cx).value().to_string(),
+                )
+            })
+            .filter(|(k, _)| !k.is_empty())
+            .collect()
+    }
+
     fn send_request(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let url = self.url_input.read(cx).value().to_string();
+        let url = self.build_url_with_params(cx);
         let body = self.body_input.read(cx).value().to_string();
-        let headers_text = self.headers_input.read(cx).value().to_string();
+        let headers = self.get_headers(cx);
         let method = self.method.clone();
 
         if url.is_empty() {
@@ -117,7 +224,7 @@ impl App {
         cx.notify();
 
         cx.spawn_in(window, async move |this, cx| {
-            let result = Self::execute_request(&url, &method, &body, &headers_text).await;
+            let result = Self::execute_request(&url, &method, &body, &headers).await;
 
             cx.update(|_window, cx| {
                 this.update(cx, |app, cx| {
@@ -160,7 +267,7 @@ impl App {
         url: &str,
         method: &HttpMethod,
         body: &str,
-        headers_text: &str,
+        headers: &[(String, String)],
     ) -> Result<(u16, String), String> {
         let client = reqwest::Client::new();
 
@@ -172,11 +279,9 @@ impl App {
             HttpMethod::Patch => client.patch(url),
         };
 
-        // Parse and add headers
-        for line in headers_text.lines() {
-            if let Some((key, value)) = line.split_once(':') {
-                builder = builder.header(key.trim(), value.trim());
-            }
+        // Add headers
+        for (key, value) in headers {
+            builder = builder.header(key.as_str(), value.as_str());
         }
 
         // Add body for methods that support it
@@ -186,9 +291,7 @@ impl App {
                 HttpMethod::Post | HttpMethod::Put | HttpMethod::Patch
             )
         {
-            builder = builder
-                .header("Content-Type", "application/json")
-                .body(body.to_string());
+            builder = builder.body(body.to_string());
         }
 
         let response = builder.send().await.map_err(|e| e.to_string())?;
@@ -223,7 +326,6 @@ impl App {
             .border_b_1()
             .border_color(hsla(0.0, 0.0, 0.2, 1.0))
             .child(
-                // Method selector button (cycles through methods on click)
                 div()
                     .id("method-selector")
                     .px_3()
@@ -263,6 +365,22 @@ impl App {
 
     fn render_tabs(&self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let active_tab = self.active_tab.clone();
+        let param_count = self
+            .params
+            .iter()
+            .filter(|p| {
+                let key = p.key.read(cx).value().to_string();
+                !key.is_empty()
+            })
+            .count();
+        let header_count = self
+            .headers
+            .iter()
+            .filter(|h| {
+                let key = h.key.read(cx).value().to_string();
+                !key.is_empty()
+            })
+            .count();
 
         div()
             .bg(hsla(0.0, 0.0, 0.10, 1.0))
@@ -273,7 +391,7 @@ impl App {
                     .child(
                         Tab::new()
                             .selected(active_tab == RequestTab::Params)
-                            .child("Params")
+                            .child(format!("Params ({})", param_count))
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.active_tab = RequestTab::Params;
                                 cx.notify();
@@ -282,7 +400,7 @@ impl App {
                     .child(
                         Tab::new()
                             .selected(active_tab == RequestTab::Headers)
-                            .child("Headers")
+                            .child(format!("Headers ({})", header_count))
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.active_tab = RequestTab::Headers;
                                 cx.notify();
@@ -300,30 +418,225 @@ impl App {
             )
     }
 
+    fn render_kv_row(
+        &self,
+        index: usize,
+        pair: &KeyValuePair,
+        is_param: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let id = if is_param {
+            format!("param-{}", index)
+        } else {
+            format!("header-{}", index)
+        };
+
+        div()
+            .id(ElementId::Name(id.into()))
+            .flex()
+            .gap_2()
+            .mb_2()
+            .child(
+                div()
+                    .flex_1()
+                    .child(Input::new(&pair.key).appearance(false)),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .child(Input::new(&pair.value).appearance(false)),
+            )
+            .child(
+                div()
+                    .id(ElementId::Name(
+                        format!(
+                            "delete-{}-{}",
+                            if is_param { "param" } else { "header" },
+                            index
+                        )
+                        .into(),
+                    ))
+                    .px_2()
+                    .py_1()
+                    .rounded(px(4.0))
+                    .cursor_pointer()
+                    .text_color(hsla(0.0, 0.0, 0.5, 1.0))
+                    .hover(|s| s.text_color(hsla(0.0, 0.7, 0.6, 1.0)))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _, _, cx| {
+                            if is_param {
+                                if this.params.len() > 1 {
+                                    this.params.remove(index);
+                                }
+                            } else {
+                                if this.headers.len() > 1 {
+                                    this.headers.remove(index);
+                                }
+                            }
+                            cx.notify();
+                        }),
+                    )
+                    .child("×"),
+            )
+    }
+
     fn render_request_panel(
         &self,
         _window: &mut Window,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        let content = match self.active_tab {
+            RequestTab::Params => {
+                let rows: Vec<_> = self
+                    .params
+                    .iter()
+                    .enumerate()
+                    .map(|(i, pair)| self.render_kv_row(i, pair, true, cx))
+                    .collect();
+
+                div()
+                    .size_full()
+                    .flex()
+                    .flex_col()
+                    .child(
+                        // Header row
+                        div()
+                            .flex()
+                            .gap_2()
+                            .mb_3()
+                            .pb_2()
+                            .border_b_1()
+                            .border_color(hsla(0.0, 0.0, 0.2, 1.0))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .text_xs()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(hsla(0.0, 0.0, 0.6, 1.0))
+                                    .child("KEY"),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .text_xs()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(hsla(0.0, 0.0, 0.6, 1.0))
+                                    .child("VALUE"),
+                            )
+                            .child(div().w(px(30.0))),
+                    )
+                    .children(rows)
+                    .child(
+                        div()
+                            .id("add-param")
+                            .mt_2()
+                            .px_3()
+                            .py_2()
+                            .rounded(px(4.0))
+                            .text_sm()
+                            .cursor_pointer()
+                            .text_color(hsla(0.55, 0.7, 0.5, 1.0))
+                            .hover(|s| s.bg(hsla(0.0, 0.0, 0.15, 1.0)))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, _, window, cx| {
+                                    this.add_param(window, cx);
+                                }),
+                            )
+                            .child("+ Add Parameter"),
+                    )
+                    .into_any_element()
+            }
+            RequestTab::Headers => {
+                let rows: Vec<_> = self
+                    .headers
+                    .iter()
+                    .enumerate()
+                    .map(|(i, pair)| self.render_kv_row(i, pair, false, cx))
+                    .collect();
+
+                div()
+                    .size_full()
+                    .flex()
+                    .flex_col()
+                    .child(
+                        div()
+                            .flex()
+                            .gap_2()
+                            .mb_3()
+                            .pb_2()
+                            .border_b_1()
+                            .border_color(hsla(0.0, 0.0, 0.2, 1.0))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .text_xs()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(hsla(0.0, 0.0, 0.6, 1.0))
+                                    .child("KEY"),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .text_xs()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(hsla(0.0, 0.0, 0.6, 1.0))
+                                    .child("VALUE"),
+                            )
+                            .child(div().w(px(30.0))),
+                    )
+                    .children(rows)
+                    .child(
+                        div()
+                            .id("add-header")
+                            .mt_2()
+                            .px_3()
+                            .py_2()
+                            .rounded(px(4.0))
+                            .text_sm()
+                            .cursor_pointer()
+                            .text_color(hsla(0.55, 0.7, 0.5, 1.0))
+                            .hover(|s| s.bg(hsla(0.0, 0.0, 0.15, 1.0)))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, _, window, cx| {
+                                    this.add_header(window, cx);
+                                }),
+                            )
+                            .child("+ Add Header"),
+                    )
+                    .into_any_element()
+            }
+            RequestTab::Body => div()
+                .size_full()
+                .flex()
+                .flex_col()
+                .child(
+                    div()
+                        .mb_2()
+                        .text_xs()
+                        .text_color(hsla(0.0, 0.0, 0.5, 1.0))
+                        .child("Enter JSON body for POST/PUT/PATCH requests"),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .p_3()
+                        .rounded(px(6.0))
+                        .bg(hsla(0.0, 0.0, 0.06, 1.0))
+                        .border_1()
+                        .border_color(hsla(0.0, 0.0, 0.2, 1.0))
+                        .child(Input::new(&self.body_input).appearance(false)),
+                )
+                .into_any_element(),
+        };
+
         div()
             .flex_1()
             .p_4()
             .bg(hsla(0.0, 0.0, 0.08, 1.0))
-            .child(match self.active_tab {
-                RequestTab::Params => div()
-                    .text_sm()
-                    .text_color(hsla(0.0, 0.0, 0.5, 1.0))
-                    .child("Query parameters are extracted from the URL")
-                    .into_any_element(),
-                RequestTab::Headers => div()
-                    .size_full()
-                    .child(Input::new(&self.headers_input).appearance(false))
-                    .into_any_element(),
-                RequestTab::Body => div()
-                    .size_full()
-                    .child(Input::new(&self.body_input).appearance(false))
-                    .into_any_element(),
-            })
+            .child(content)
     }
 
     fn render_response_panel(
@@ -364,7 +677,6 @@ impl App {
                 .into_any_element()
         };
 
-        // Build response lines as separate elements
         let response_lines: Vec<_> = self
             .response_body
             .lines()
@@ -422,6 +734,17 @@ impl App {
             )
             .child(Scrollbar::vertical(&self.scroll_handle))
     }
+}
+
+/// Simple URL encoding helper
+fn urlencoding(s: &str) -> String {
+    s.chars()
+        .map(|c| match c {
+            'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' | '.' | '~' => c.to_string(),
+            ' ' => "+".to_string(),
+            _ => format!("%{:02X}", c as u32),
+        })
+        .collect()
 }
 
 impl Render for App {
