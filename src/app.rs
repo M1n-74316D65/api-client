@@ -4,6 +4,7 @@ use gpui_component::badge::Badge;
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::divider::Divider;
 use gpui_component::input::{Input, InputState};
+use gpui_component::resizable::{h_resizable, resizable_panel, v_resizable};
 use gpui_component::scroll::{ScrollableElement, Scrollbar};
 use gpui_component::tab::{Tab, TabBar};
 use gpui_component::theme::ActiveTheme;
@@ -76,16 +77,6 @@ impl HttpMethod {
         }
     }
 
-    fn bg_color(&self) -> Hsla {
-        match self {
-            HttpMethod::Get => hsla(0.35, 0.4, 0.15, 1.0),
-            HttpMethod::Post => hsla(0.55, 0.4, 0.15, 1.0),
-            HttpMethod::Put => hsla(0.12, 0.4, 0.15, 1.0),
-            HttpMethod::Delete => hsla(0.0, 0.4, 0.15, 1.0),
-            HttpMethod::Patch => hsla(0.75, 0.3, 0.15, 1.0),
-        }
-    }
-
     fn next(&self) -> HttpMethod {
         match self {
             HttpMethod::Get => HttpMethod::Post,
@@ -141,7 +132,6 @@ pub struct App {
     headers: Vec<KeyValuePair>,
     response_body: String,
     scroll_handle: ScrollHandle,
-    sidebar_scroll: ScrollHandle,
     method: HttpMethod,
     active_tab: RequestTab,
     is_loading: bool,
@@ -202,7 +192,6 @@ impl App {
             headers,
             response_body: String::new(),
             scroll_handle: ScrollHandle::new(),
-            sidebar_scroll: ScrollHandle::new(),
             method: HttpMethod::Get,
             active_tab: RequestTab::Params,
             is_loading: false,
@@ -489,7 +478,7 @@ impl App {
     }
 
     /// Save current request to file
-    fn save_request(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn save_request(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         if let Some(folder) = &self.current_folder {
             let url = self.url_input.read(cx).value().to_string();
             let body = self.body_input.read(cx).value().to_string();
@@ -610,8 +599,7 @@ impl App {
             .to_string();
 
         div()
-            .w(px(240.0))
-            .h_full()
+            .size_full()
             .flex()
             .flex_col()
             .bg(cx.theme().secondary)
@@ -1408,26 +1396,30 @@ impl Render for App {
             .font_family("Inter, SF Pro Display, system-ui, sans-serif")
             .child(self.render_title_bar(window, cx))
             .child(
-                // Main content area with sidebar
-                div()
-                    .flex_1()
-                    .flex()
-                    .overflow_hidden()
-                    // Sidebar
-                    .when(self.sidebar_visible, |this| {
-                        this.child(self.render_sidebar(window, cx))
-                    })
-                    // Main panel
+                h_resizable("main-split")
                     .child(
-                        div()
-                            .flex_1()
-                            .flex()
-                            .flex_col()
-                            .overflow_hidden()
-                            .child(self.render_request_bar(window, cx))
-                            .child(self.render_tabs(window, cx))
-                            .child(self.render_request_panel(window, cx))
-                            .child(self.render_response_panel(window, cx)),
+                        resizable_panel()
+                            .size(px(250.0))
+                            .child(self.render_sidebar(window, cx)),
+                    )
+                    .child(
+                        resizable_panel().child(
+                            v_resizable("content-split")
+                                .child(
+                                    resizable_panel().child(
+                                        div()
+                                            .size_full()
+                                            .flex()
+                                            .flex_col()
+                                            .child(self.render_request_bar(window, cx))
+                                            .child(self.render_tabs(window, cx))
+                                            .child(self.render_request_panel(window, cx)),
+                                    ),
+                                )
+                                .child(
+                                    resizable_panel().child(self.render_response_panel(window, cx)),
+                                ),
+                        ),
                     ),
             )
     }
