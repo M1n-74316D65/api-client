@@ -100,6 +100,7 @@ pub struct FileEntry {
 
 pub struct App {
     url_input: Entity<InputState>,
+    name_input: Entity<InputState>,
     body_input: Entity<InputState>,
     params: Vec<KeyValuePair>,
     headers: Vec<KeyValuePair>,
@@ -127,6 +128,13 @@ impl App {
             state
         });
 
+        let name_input = cx.new(|cx| {
+            let mut state = InputState::new(window, cx);
+            state.set_placeholder("Request Name", window, cx);
+            state.set_value("New Request", window, cx);
+            state
+        });
+
         let body_input = cx.new(|cx| {
             let mut state = InputState::new(window, cx);
             state.set_placeholder("Enter JSON body...", window, cx);
@@ -144,6 +152,7 @@ impl App {
 
         Self {
             url_input,
+            name_input,
             body_input,
             params,
             headers,
@@ -255,6 +264,9 @@ impl App {
     }
 
     fn send_request(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // Auto-save request
+        self.save_request(window, cx);
+
         let url = self.build_url_with_params(cx);
         let body = self.body_input.read(cx).value().to_string();
         let headers = self.get_headers(cx);
@@ -419,11 +431,79 @@ impl App {
         None
     }
 
+    /// Save current request to file
+    fn save_request(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(folder) = &self.current_folder {
+            let url = self.url_input.read(cx).value().to_string();
+            let body = self.body_input.read(cx).value().to_string();
+            let method = self.method.as_str().to_string();
+            let name = self.name_input.read(cx).value().to_string();
+
+            let mut headers = std::collections::HashMap::new();
+            for kv in &self.headers {
+                let key = kv.key.read(cx).value().to_string();
+                let value = kv.value.read(cx).value().to_string();
+                if !key.is_empty() {
+                    headers.insert(key, value);
+                }
+            }
+
+            // If name is empty, provide a default
+            let name = if name.is_empty() {
+                format!("New Request {}", self.saved_requests.len() + 1)
+            } else {
+                name
+            };
+
+            let request = SavedRequest {
+                name: name.clone(),
+                method,
+                url,
+                headers,
+                body,
+            };
+
+            if let Ok(json) = serde_json::to_string_pretty(&request) {
+                let path = if let Some(idx) = self.selected_request {
+                    // Overwrite existing file
+                    self.saved_requests[idx].path.clone()
+                } else {
+                    // Create new file
+                    let safe_name: String = name
+                        .chars()
+                        .map(|c| if c.is_alphanumeric() { c } else { '-' })
+                        .collect();
+                    folder.join(format!("{}.json", safe_name))
+                };
+
+                if std::fs::write(&path, json).is_ok() {
+                    self.load_folder(cx);
+
+                    // If we just saved to a specific path, find it and select it
+                    if let Some(idx) = self.saved_requests.iter().position(|r| r.path == path) {
+                        self.selected_request = Some(idx);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Save as new request
+    fn save_new_request(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.selected_request = None;
+        self.save_request(window, cx);
+    }
+
     /// Load a saved request into the editor
     fn load_request(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(entry) = self.saved_requests.get(index) {
             if let Ok(content) = std::fs::read_to_string(&entry.path) {
                 if let Ok(request) = serde_json::from_str::<SavedRequest>(&content) {
+                    // Set name
+                    self.name_input.update(cx, |state, cx| {
+                        state.set_value(&request.name, window, cx);
+                    });
+
                     // Set method
                     self.method = match request.method.to_uppercase().as_str() {
                         "GET" => HttpMethod::Get,
@@ -631,68 +711,141 @@ impl App {
     }
 
     fn render_request_bar(&self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let method = self.method.clone();
-        let method_color = method.color();
-        let method_bg = method.bg_color();
-        let method_text = method.as_str();
+        let (method_bg, method_color, method_text) = match self.method {
+            HttpMethod::Get => (
+                hsla(0.35, 0.6, 0.15, 1.0),
+                hsla(0.35, 0.8, 0.65, 1.0),
+                "GET",
+            ),
+            HttpMethod::Post => (hsla(0.6, 0.6, 0.15, 1.0), hsla(0.6, 0.8, 0.65, 1.0), "POST"),
+            HttpMethod::Put => (hsla(0.1, 0.6, 0.15, 1.0), hsla(0.1, 0.8, 0.65, 1.0), "PUT"),
+            HttpMethod::Delete => (
+                hsla(0.0, 0.6, 0.15, 1.0),
+                hsla(0.0, 0.8, 0.65, 1.0),
+                "ERR", // DELETE is too long for icon style sometimes, but DELETE is standard
+            ),
+            HttpMethod::Patch => (hsla(0.5, 0.6, 0.15, 1.0), hsla(0.5, 0.8, 0.65, 1.0), "PTCH"),
+        };
+        let method_text = if self.method == HttpMethod::Delete {
+            "DEL"
+        } else {
+            method_text
+        };
 
         div()
             .flex()
-            .items_center()
+            .flex_col()
             .gap_3()
             .p_4()
             .bg(hsla(0.0, 0.0, 0.11, 1.0))
+            // Row 1: Name Input
             .child(
-                // Method selector button with icon
                 div()
-                    .id("method-selector")
                     .flex()
                     .items_center()
-                    .gap_2()
-                    .px_3()
-                    .py_2()
-                    .rounded(px(8.0))
-                    .bg(method_bg)
-                    .border_1()
-                    .border_color(method_color.opacity(0.3))
-                    .cursor_pointer()
-                    .hover(|s| s.bg(method_bg.opacity(0.8)))
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |this, _, _, cx| {
-                            this.method = this.method.next();
-                            cx.notify();
-                        }),
+                    .gap_3()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(hsla(0.0, 0.0, 0.6, 1.0))
+                            .child("Name"),
                     )
                     .child(
                         div()
-                            .font_weight(FontWeight::BOLD)
-                            .text_sm()
-                            .text_color(method_color)
-                            .child(method_text),
-                    )
-                    .child(Icon::new(IconName::ChevronDown).text_color(method_color.opacity(0.7))),
+                            .flex_1()
+                            .px_3()
+                            .py_1()
+                            .rounded(px(8.0))
+                            .bg(hsla(0.0, 0.0, 0.06, 1.0))
+                            .border_1()
+                            .border_color(hsla(0.0, 0.0, 0.2, 1.0))
+                            .child(Input::new(&self.name_input).appearance(false)),
+                    ),
             )
+            // Row 2: Request Details
             .child(
                 div()
-                    .flex_1()
-                    .px_3()
-                    .py_1()
-                    .rounded(px(8.0))
-                    .bg(hsla(0.0, 0.0, 0.06, 1.0))
-                    .border_1()
-                    .border_color(hsla(0.0, 0.0, 0.2, 1.0))
-                    .child(Input::new(&self.url_input).appearance(false)),
-            )
-            .child(
-                Button::new("send")
-                    .primary()
-                    .icon(IconName::ArrowRight)
-                    .label("Send")
-                    .loading(self.is_loading)
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.send_request(window, cx);
-                    })),
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .child(
+                        // Method selector button with icon
+                        div()
+                            .id("method-selector")
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .px_3()
+                            .py_2()
+                            .rounded(px(8.0))
+                            .bg(method_bg)
+                            .border_1()
+                            .border_color(method_color.opacity(0.3))
+                            .cursor_pointer()
+                            .hover(|s| s.bg(method_bg.opacity(0.8)))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |this, _, _, cx| {
+                                    this.method = this.method.next();
+                                    cx.notify();
+                                }),
+                            )
+                            .child(
+                                div()
+                                    .font_weight(FontWeight::BOLD)
+                                    .text_sm()
+                                    .text_color(method_color)
+                                    .child(method_text),
+                            )
+                            .child(
+                                Icon::new(IconName::ChevronDown)
+                                    .text_color(method_color.opacity(0.7)),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .px_3()
+                            .py_1()
+                            .rounded(px(8.0))
+                            .bg(hsla(0.0, 0.0, 0.06, 1.0))
+                            .border_1()
+                            .border_color(hsla(0.0, 0.0, 0.2, 1.0))
+                            .child(Input::new(&self.url_input).appearance(false)),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                Button::new("save-req")
+                                    .icon(IconName::File)
+                                    .label("Save")
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.save_request(window, cx);
+                                    })),
+                            )
+                            .child(
+                                Button::new("save-new-req")
+                                    .icon(IconName::Plus)
+                                    .label("New")
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.save_new_request(window, cx);
+                                    })),
+                            )
+                            .child(
+                                Button::new("send")
+                                    .primary()
+                                    .icon(IconName::ArrowRight)
+                                    .label("Send")
+                                    .loading(self.is_loading)
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.send_request(window, cx);
+                                    })),
+                            ),
+                    ),
             )
     }
 
