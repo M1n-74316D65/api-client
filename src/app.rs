@@ -142,6 +142,9 @@ pub struct App {
     current_folder: Option<PathBuf>,
     saved_requests: Vec<FileEntry>,
     selected_request: Option<usize>,
+    // Rename state
+    rename_input: Entity<InputState>,
+    renaming_index: Option<usize>,
 }
 
 impl App {
@@ -157,6 +160,12 @@ impl App {
             let mut state = InputState::new(window, cx);
             state.set_placeholder("Request Name", window, cx);
             state.set_value("New Request", window, cx);
+            state
+        });
+
+        let rename_input = cx.new(|cx| {
+            let mut state = InputState::new(window, cx);
+            state.set_placeholder("New Name", window, cx);
             state
         });
 
@@ -199,9 +208,11 @@ impl App {
             response_time: None,
             // Sidebar state
             sidebar_visible: true,
-            current_folder,
-            saved_requests,
+            current_folder: None,
+            saved_requests: Vec::new(),
             selected_request: None,
+            rename_input,
+            renaming_index: None,
         }
     }
 
@@ -588,6 +599,107 @@ impl App {
         }
     }
 
+    /// Delete a request
+    fn delete_request(&mut self, index: usize, _window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(folder) = &self.current_folder {
+            if let Some(request) = self.saved_requests.get(index) {
+                let name = if request.name.ends_with(".json") {
+                    request.name.clone()
+                } else {
+                    format!("{}.json", request.name)
+                };
+                let path = folder.join(&name);
+
+                // Attempt to delete file
+                if let Err(e) = std::fs::remove_file(&path) {
+                    eprintln!("Failed to delete file {:?}: {}", path, e);
+                    return;
+                }
+
+                // Remove from list
+                self.saved_requests.remove(index);
+
+                // Update selected index
+                if let Some(selected) = self.selected_request {
+                    if selected == index {
+                        self.selected_request = None;
+                    } else if selected > index {
+                        self.selected_request = Some(selected - 1);
+                    }
+                }
+
+                cx.notify();
+            }
+        }
+    }
+
+    /// Start renaming a request
+    fn start_renaming(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(request) = self.saved_requests.get(index) {
+            self.renaming_index = Some(index);
+            // remove .json extension for editing
+            let name_str = if request.name.ends_with(".json") {
+                &request.name[..request.name.len() - 5]
+            } else {
+                &request.name
+            };
+            let name = name_str.to_string();
+
+            let input_entity = self.rename_input.clone();
+            input_entity.update(cx, |state, cx| {
+                state.set_value(&name, window, cx);
+                // state.focus_handle(cx).focus(window); // Keeping focus commented for safety first, can enable later
+            });
+            cx.notify();
+        }
+    }
+
+    /// Cancel renaming
+    fn cancel_renaming(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        self.renaming_index = None;
+        cx.notify();
+    }
+
+    /// Confirm renaming
+    fn confirm_renaming(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(index) = self.renaming_index {
+            if let Some(folder) = &self.current_folder {
+                if let Some(request) = self.saved_requests.get(index) {
+                    let new_name = self.rename_input.read(cx).value().to_string();
+                    let safe_name = urlencoding(&new_name)
+                        .replace("%", "")
+                        .replace("/", "")
+                        .replace("\\", "");
+
+                    if safe_name.is_empty() {
+                        return;
+                    }
+
+                    let old_filename = if request.name.ends_with(".json") {
+                        request.name.clone()
+                    } else {
+                        format!("{}.json", request.name)
+                    };
+
+                    let new_filename = format!("{}.json", safe_name);
+                    let old_path = folder.join(&old_filename);
+                    let new_path = folder.join(&new_filename);
+
+                    if let Err(e) = std::fs::rename(&old_path, &new_path) {
+                        eprintln!("Failed to rename file: {}", e);
+                    } else {
+                        // Update the entry in the list
+                        if let Some(entry) = self.saved_requests.get_mut(index) {
+                            entry.name = new_filename;
+                        }
+                    }
+                }
+            }
+        }
+        self.renaming_index = None;
+        cx.notify();
+    }
+
     /// Render the sidebar
     fn render_sidebar(&self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let folder_name: String = self
@@ -676,6 +788,7 @@ impl App {
                         .unwrap_or(hsla(0.0, 0.0, 0.5, 1.0));
                     let method_str = entry.method.as_ref().map(|m| m.as_str()).unwrap_or("???");
                     let name = entry.name.clone();
+                    let is_renaming = self.renaming_index == Some(i);
 
                     div()
                         .id(ElementId::Name(format!("request-{}", i).into()))
@@ -699,18 +812,125 @@ impl App {
                         )
                         .child(
                             div()
-                                .text_xs()
-                                .font_weight(FontWeight::BOLD)
-                                .text_color(method_color)
-                                .min_w(px(40.0))
-                                .child(method_str),
-                        )
-                        .child(
-                            div()
-                                .text_sm()
-                                .text_color(hsla(0.0, 0.0, 0.8, 1.0))
-                                .overflow_x_hidden()
-                                .child(name),
+                                .flex()
+                                .items_center()
+                                .justify_between()
+                                .w_full()
+                                .child(if is_renaming {
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .gap_2()
+                                        .flex_1()
+                                        .child(
+                                            div()
+                                                .flex_1()
+                                                .px_2()
+                                                .py_1()
+                                                .bg(cx.theme().input)
+                                                .rounded(px(4.0))
+                                                .child(
+                                                    Input::new(&self.rename_input)
+                                                        .appearance(false),
+                                                ),
+                                        )
+                                        // Confirm
+                                        .child(
+                                            div()
+                                                .cursor_pointer()
+                                                .child(
+                                                    Icon::new(IconName::Check)
+                                                        .size(px(14.0))
+                                                        .text_color(hsla(0.4, 0.7, 0.5, 1.0)),
+                                                )
+                                                .on_mouse_down(
+                                                    MouseButton::Left,
+                                                    cx.listener(move |this, _, window, cx| {
+                                                        cx.stop_propagation();
+                                                        this.confirm_renaming(window, cx);
+                                                    }),
+                                                ),
+                                        )
+                                        // Cancel
+                                        .child(
+                                            div()
+                                                .cursor_pointer()
+                                                .child(
+                                                    Icon::new(IconName::Close)
+                                                        .size(px(14.0))
+                                                        .text_color(hsla(0.0, 0.7, 0.5, 1.0)),
+                                                )
+                                                .on_mouse_down(
+                                                    MouseButton::Left,
+                                                    cx.listener(move |this, _, window, cx| {
+                                                        cx.stop_propagation();
+                                                        this.cancel_renaming(window, cx);
+                                                    }),
+                                                ),
+                                        )
+                                } else {
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .gap_2()
+                                        .flex_1()
+                                        .child(
+                                            div()
+                                                .px_1()
+                                                .rounded(px(4.0))
+                                                .bg(method_color.opacity(0.1))
+                                                .text_color(method_color)
+                                                .text_xs()
+                                                .font_weight(FontWeight::BOLD)
+                                                .child(method_str),
+                                        )
+                                        .child(div().text_sm().child(name))
+                                })
+                                .child(
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .gap_1()
+                                        .child(
+                                            div()
+                                                .p_1()
+                                                .rounded(px(4.0))
+                                                .hover(|s| s.bg(hsla(0.0, 0.0, 0.3, 0.5)))
+                                                .on_mouse_down(
+                                                    MouseButton::Left,
+                                                    cx.listener(move |this, _, window, cx| {
+                                                        cx.stop_propagation();
+                                                        this.start_renaming(i, window, cx);
+                                                    }),
+                                                )
+                                                .child(
+                                                    Icon::new(IconName::Settings)
+                                                        .size(px(14.0))
+                                                        .text_color(hsla(0.0, 0.0, 0.6, 1.0)),
+                                                ),
+                                        )
+                                        .child(
+                                            div()
+                                                .id(ElementId::Name(
+                                                    format!("del-req-{}", i).into(),
+                                                ))
+                                                .p_1()
+                                                .rounded(px(4.0))
+                                                .hover(|s| s.bg(hsla(0.0, 0.0, 0.3, 0.5)))
+                                                .on_mouse_down(
+                                                    MouseButton::Left,
+                                                    cx.listener(move |this, _, window, cx| {
+                                                        cx.stop_propagation();
+                                                        this.delete_request(i, window, cx);
+                                                    }),
+                                                )
+                                                .child(
+                                                    Icon::new(IconName::Delete)
+                                                        .size(px(14.0))
+                                                        .text_color(hsla(0.0, 0.0, 0.6, 1.0)),
+                                                ),
+                                        ),
+                                ),
                         )
                 }),
             ))
@@ -925,7 +1145,7 @@ impl App {
                                 Button::new("save-req")
                                     .icon(IconName::File)
                                     .label("Save")
-                                    .w_full()
+                                    .outline()
                                     .on_click(cx.listener(|this, _, window, cx| {
                                         this.save_request(window, cx);
                                     })),
