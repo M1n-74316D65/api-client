@@ -145,6 +145,7 @@ pub struct App {
     // Rename state
     rename_input: Entity<InputState>,
     renaming_index: Option<usize>,
+    _subscription: Subscription,
 }
 
 impl App {
@@ -208,11 +209,14 @@ impl App {
             response_time: None,
             // Sidebar state
             sidebar_visible: true,
-            current_folder: None,
-            saved_requests: Vec::new(),
+            current_folder,
+            saved_requests,
             selected_request: None,
             rename_input,
             renaming_index: None,
+            _subscription: cx.on_release(|_, cx| {
+                cx.quit();
+            }),
         }
     }
 
@@ -661,7 +665,7 @@ impl App {
     }
 
     /// Confirm renaming
-    fn confirm_renaming(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn confirm_renaming(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         if let Some(index) = self.renaming_index {
             if let Some(folder) = &self.current_folder {
                 if let Some(request) = self.saved_requests.get(index) {
