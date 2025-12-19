@@ -131,6 +131,7 @@ pub struct App {
     params: Vec<KeyValuePair>,
     headers: Vec<KeyValuePair>,
     response_body: String,
+    response_is_large: bool,
     scroll_handle: ScrollHandle,
     method: HttpMethod,
     active_tab: RequestTab,
@@ -201,6 +202,7 @@ impl App {
             params,
             headers,
             response_body: String::new(),
+            response_is_large: false,
             scroll_handle: ScrollHandle::new(),
             method: HttpMethod::Get,
             active_tab: RequestTab::Params,
@@ -327,6 +329,7 @@ impl App {
         self.is_loading = true;
         self.response_status = None;
         self.response_body.clear();
+        self.response_is_large = false;
         self.response_time = None;
         cx.notify();
 
@@ -352,9 +355,12 @@ impl App {
                             };
                             app.response_status = Some((status, status_text.to_string()));
 
-                            // Try to format JSON response
-                            app.response_body = if let Ok(json) =
-                                serde_json::from_str::<serde_json::Value>(&body)
+                            app.response_is_large = body.len() > MAX_RESPONSE_DISPLAY_BYTES;
+
+                            // Try to format JSON response when it's safe to display.
+                            app.response_body = if app.response_is_large {
+                                body
+                            } else if let Ok(json) = serde_json::from_str::<serde_json::Value>(&body)
                             {
                                 serde_json::to_string_pretty(&json).unwrap_or(body)
                             } else {
@@ -364,6 +370,7 @@ impl App {
                         Err(e) => {
                             app.response_status = Some((0, "Error".to_string()));
                             app.response_body = format!("Error: {}", e);
+                            app.response_is_large = false;
                         }
                     }
                     cx.notify();
@@ -1446,9 +1453,11 @@ impl App {
 
     fn render_response_panel(
         &self,
-        _window: &mut Window,
-        _cx: &mut Context<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        let has_response = !self.response_body.is_empty();
+        let response_too_large = self.response_is_large;
         let status_badge = if let Some((code, text)) = &self.response_status {
             let (bg_color, text_color, icon) = if *code >= 200 && *code < 300 {
                 (
@@ -1529,24 +1538,27 @@ impl App {
                 .into_any_element()
         };
 
-        let response_lines: Vec<_> = self
-            .response_body
-            .lines()
-            .enumerate()
-            .map(|(i, line)| {
-                let line_content: String = if line.is_empty() {
-                    " ".to_string()
-                } else {
-                    line.to_string()
-                };
-                div()
-                    .id(ElementId::Name(format!("line-{}", i).into()))
-                    .text_xs()
-                    .font_family("monospace")
-                    .text_color(hsla(0.0, 0.0, 0.8, 1.0))
-                    .child(line_content)
-            })
-            .collect();
+        let response_lines: Vec<_> = if response_too_large {
+            Vec::new()
+        } else {
+            self.response_body
+                .lines()
+                .enumerate()
+                .map(|(i, line)| {
+                    let line_content: String = if line.is_empty() {
+                        " ".to_string()
+                    } else {
+                        line.to_string()
+                    };
+                    div()
+                        .id(ElementId::Name(format!("line-{}", i).into()))
+                        .text_xs()
+                        .font_family("monospace")
+                        .text_color(hsla(0.0, 0.0, 0.8, 1.0))
+                        .child(line_content)
+                })
+                .collect()
+        };
 
         div()
             .flex_1()
@@ -1578,17 +1590,76 @@ impl App {
                                     .child("Response"),
                             ),
                     )
-                    .child(status_badge),
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .when(has_response, |this| {
+                                this.child(
+                                    Button::new("copy-response")
+                                        .icon(IconName::Copy)
+                                        .label("Copy")
+                                        .ghost()
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.copy_response(cx);
+                                        })),
+                                )
+                            })
+                            .when(has_response, |this| {
+                                this.child(
+                                    Button::new("save-response")
+                                        .icon(IconName::ArrowDown)
+                                        .label("Save")
+                                        .ghost()
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.save_response_to_file(window, cx);
+                                        })),
+                                )
+                            })
+                            .child(status_badge),
+                    ),
             )
-            .child(
+            .child(if response_too_large {
+                let response_size = format_size(self.response_body.len());
+                div()
+                    .id("response-scroll")
+                    .flex_1()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .justify_center()
+                    .gap_2()
+                    .p_4()
+                    .bg(hsla(0.0, 0.0, 0.03, 1.0))
+                    .child(
+                        Icon::new(IconName::TriangleAlert)
+                            .text_color(hsla(0.12, 0.7, 0.5, 1.0)),
+                    )
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(hsla(0.0, 0.0, 0.8, 1.0))
+                            .child("Response too large to display"),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(hsla(0.0, 0.0, 0.6, 1.0))
+                            .child(format!("Size: {}", response_size)),
+                    )
+                    .into_any_element()
+            } else {
                 div()
                     .id("response-scroll")
                     .flex_1()
                     .overflow_y_scrollbar()
                     .p_4()
                     .bg(hsla(0.0, 0.0, 0.03, 1.0))
-                    .children(response_lines),
-            )
+                    .children(response_lines)
+                    .into_any_element()
+            })
             .child(Scrollbar::vertical(&self.scroll_handle))
     }
 }
@@ -1602,6 +1673,22 @@ fn urlencoding(s: &str) -> String {
             _ => format!("%{:02X}", c as u32),
         })
         .collect()
+}
+
+const MAX_RESPONSE_DISPLAY_BYTES: usize = 100_000;
+
+fn format_size(bytes: usize) -> String {
+    const KB: f64 = 1024.0;
+    const MB: f64 = 1024.0 * 1024.0;
+    let bytes_f = bytes as f64;
+
+    if bytes_f >= MB {
+        format!("{:.1} MB", bytes_f / MB)
+    } else if bytes_f >= KB {
+        format!("{:.1} KB", bytes_f / KB)
+    } else {
+        format!("{} B", bytes)
+    }
 }
 
 impl Render for App {
@@ -1642,5 +1729,35 @@ impl Render for App {
                         ),
                     ),
             )
+    }
+}
+
+impl App {
+    fn copy_response(&self, cx: &mut Context<Self>) {
+        if self.response_body.is_empty() {
+            return;
+        }
+        cx.write_to_clipboard(ClipboardItem::new_string(self.response_body.clone()));
+    }
+
+    fn save_response_to_file(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.response_body.is_empty() {
+            return;
+        }
+
+        let response_text = self.response_body.clone();
+        cx.spawn_in(window, async move |_this, _cx| {
+            let file = rfd::AsyncFileDialog::new()
+                .set_title("Save Response")
+                .set_file_name("response.txt")
+                .save_file()
+                .await;
+
+            if let Some(file) = file {
+                let path = file.path().to_path_buf();
+                let _ = std::fs::write(path, response_text);
+            }
+        })
+        .detach();
     }
 }
