@@ -2,7 +2,9 @@ use gpui::*;
 use gpui_component::*;
 
 mod app;
-use app::App;
+use app::{
+    App, CloseWindow, NewRequest, OpenFolder, SaveRequest, SendRequest, ToggleSidebar, ToggleTheme,
+};
 
 fn main() {
     let app = Application::new().with_assets(gpui_component_assets::Assets);
@@ -14,6 +16,31 @@ fn main() {
     app.run(move |cx| {
         // This must be called before using any GPUI Component features.
         gpui_component::init(cx);
+
+        // Bind keyboard shortcuts (platform-adaptive: cmd for macOS, ctrl for Windows/Linux)
+        cx.bind_keys([
+            // Send request: Cmd/Ctrl + Enter
+            KeyBinding::new("cmd-enter", SendRequest, Some("ApiClient")),
+            KeyBinding::new("ctrl-enter", SendRequest, Some("ApiClient")),
+            // Save request: Cmd/Ctrl + S
+            KeyBinding::new("cmd-s", SaveRequest, Some("ApiClient")),
+            KeyBinding::new("ctrl-s", SaveRequest, Some("ApiClient")),
+            // New request: Cmd/Ctrl + N
+            KeyBinding::new("cmd-n", NewRequest, Some("ApiClient")),
+            KeyBinding::new("ctrl-n", NewRequest, Some("ApiClient")),
+            // Open folder: Cmd/Ctrl + O
+            KeyBinding::new("cmd-o", OpenFolder, Some("ApiClient")),
+            KeyBinding::new("ctrl-o", OpenFolder, Some("ApiClient")),
+            // Toggle sidebar: Cmd/Ctrl + B
+            KeyBinding::new("cmd-b", ToggleSidebar, Some("ApiClient")),
+            KeyBinding::new("ctrl-b", ToggleSidebar, Some("ApiClient")),
+            // Toggle theme: Cmd/Ctrl + Shift + T
+            KeyBinding::new("cmd-shift-t", ToggleTheme, Some("ApiClient")),
+            KeyBinding::new("ctrl-shift-t", ToggleTheme, Some("ApiClient")),
+            // Close window: Cmd/Ctrl + W
+            KeyBinding::new("cmd-w", CloseWindow, Some("ApiClient")),
+            KeyBinding::new("ctrl-w", CloseWindow, Some("ApiClient")),
+        ]);
 
         cx.spawn(async move |cx| {
             let options = WindowOptions {

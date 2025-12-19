@@ -15,6 +15,20 @@ use gpui_component::*;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+// Define keyboard actions
+actions!(
+    api_client,
+    [
+        SendRequest,
+        SaveRequest,
+        NewRequest,
+        OpenFolder,
+        ToggleSidebar,
+        ToggleTheme,
+        CloseWindow
+    ]
+);
+
 /// Application configuration
 #[derive(Debug, Serialize, Deserialize, Default)]
 struct AppConfig {
@@ -198,7 +212,7 @@ impl App {
             Vec::new()
         };
 
-        Self {
+        let app = Self {
             url_input,
             name_input,
             body_input,
@@ -222,7 +236,9 @@ impl App {
             _subscription: cx.on_release(|_, cx| {
                 cx.quit();
             }),
-        }
+        };
+
+        app
     }
 
     fn create_kv_pair(
@@ -1850,6 +1866,34 @@ impl Render for App {
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
             .font_family("Inter, SF Pro Display, system-ui, sans-serif")
+            .key_context("ApiClient")
+            .on_action(cx.listener(|this, _: &SendRequest, window, cx| {
+                this.send_request(window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &SaveRequest, window, cx| {
+                this.save_request(window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &NewRequest, window, cx| {
+                this.save_new_request(window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &OpenFolder, window, cx| {
+                this.open_folder(window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &ToggleSidebar, _, cx| {
+                this.sidebar_visible = !this.sidebar_visible;
+                cx.notify();
+            }))
+            .on_action(cx.listener(|_this, _: &ToggleTheme, window, cx| {
+                let current_mode = cx.theme().mode;
+                let new_mode = match current_mode {
+                    ThemeMode::Light => ThemeMode::Dark,
+                    ThemeMode::Dark => ThemeMode::Light,
+                };
+                Theme::change(new_mode, Some(window), cx);
+            }))
+            .on_action(cx.listener(|_this, _: &CloseWindow, window, _cx| {
+                window.remove_window();
+            }))
             .child(self.render_title_bar(window, cx))
             .child(
                 h_resizable("main-split")
