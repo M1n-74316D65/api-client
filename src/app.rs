@@ -6,8 +6,11 @@ use gpui_component::divider::Divider;
 use gpui_component::input::{Input, InputState};
 use gpui_component::resizable::{h_resizable, resizable_panel, v_resizable};
 use gpui_component::scroll::{ScrollableElement, Scrollbar};
+use gpui_component::spinner::Spinner;
 use gpui_component::tab::{Tab, TabBar};
-use gpui_component::theme::ActiveTheme;
+use gpui_component::tag::Tag;
+use gpui_component::theme::{ActiveTheme, Theme, ThemeMode};
+use gpui_component::tooltip::Tooltip;
 use gpui_component::*;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -360,7 +363,8 @@ impl App {
                             // Try to format JSON response when it's safe to display.
                             app.response_body = if app.response_is_large {
                                 body
-                            } else if let Ok(json) = serde_json::from_str::<serde_json::Value>(&body)
+                            } else if let Ok(json) =
+                                serde_json::from_str::<serde_json::Value>(&body)
                             {
                                 serde_json::to_string_pretty(&json).unwrap_or(body)
                             } else {
@@ -725,9 +729,9 @@ impl App {
             .size_full()
             .flex()
             .flex_col()
-            .bg(cx.theme().secondary)
+            .bg(cx.theme().sidebar)
             .border_r_1()
-            .border_color(cx.theme().border)
+            .border_color(cx.theme().sidebar_border)
             // Header
             .child(
                 div()
@@ -735,24 +739,19 @@ impl App {
                     .items_center()
                     .justify_between()
                     .p_3()
-                    .p_3()
                     .border_b_1()
-                    .border_color(cx.theme().border)
+                    .border_color(cx.theme().sidebar_border)
                     .child(
                         div()
                             .flex()
                             .items_center()
                             .gap_2()
-                            .child(
-                                Icon::new(IconName::FolderOpen)
-                                    .text_color(hsla(0.12, 0.7, 0.5, 1.0)),
-                            )
+                            .child(Icon::new(IconName::FolderOpen).text_color(cx.theme().primary))
                             .child(
                                 div()
                                     .text_sm()
-                                    .text_sm()
                                     .font_weight(FontWeight::SEMIBOLD)
-                                    .text_color(cx.theme().foreground)
+                                    .text_color(cx.theme().sidebar_foreground)
                                     .child("Requests"),
                             ),
                     )
@@ -762,10 +761,7 @@ impl App {
                             .p_1()
                             .rounded(px(4.0))
                             .cursor_pointer()
-                            .p_1()
-                            .rounded(px(4.0))
-                            .cursor_pointer()
-                            .hover(|s| s.bg(cx.theme().accent))
+                            .hover(|s| s.bg(cx.theme().sidebar_accent))
                             .on_mouse_down(
                                 MouseButton::Left,
                                 cx.listener(|this, _, window, cx| {
@@ -773,9 +769,10 @@ impl App {
                                     cx.notify();
                                 }),
                             )
+                            .tooltip(|window, cx| Tooltip::new("Open Folder").build(window, cx))
                             .child(
                                 Icon::new(IconName::FolderOpen)
-                                    .text_color(hsla(0.0, 0.0, 0.5, 1.0)),
+                                    .text_color(cx.theme().sidebar_foreground),
                             ),
                     ),
             )
@@ -785,8 +782,8 @@ impl App {
                     .px_3()
                     .py_2()
                     .text_xs()
-                    .text_color(hsla(0.0, 0.0, 0.5, 1.0))
-                    .child(folder_name),
+                    .text_color(cx.theme().sidebar_foreground.opacity(0.7))
+                    .child(folder_name.clone()),
             )
             // File list
             .child(div().flex_1().overflow_y_scrollbar().children(
@@ -796,7 +793,7 @@ impl App {
                         .method
                         .as_ref()
                         .map(|m| m.color())
-                        .unwrap_or(hsla(0.0, 0.0, 0.5, 1.0));
+                        .unwrap_or(cx.theme().muted_foreground);
                     let method_str = entry.method.as_ref().map(|m| m.as_str()).unwrap_or("???");
                     let name = entry.name.clone();
                     let is_renaming = self.renaming_index == Some(i);
@@ -810,11 +807,11 @@ impl App {
                         .py_2()
                         .cursor_pointer()
                         .bg(if is_selected {
-                            hsla(0.55, 0.4, 0.2, 1.0)
+                            cx.theme().accent.opacity(0.3)
                         } else {
-                            hsla(0.0, 0.0, 0.0, 0.0)
+                            gpui::transparent_black()
                         })
-                        .hover(|s| s.bg(hsla(0.0, 0.0, 0.1, 1.0)))
+                        .hover(|s| s.bg(cx.theme().muted))
                         .on_mouse_down(
                             MouseButton::Left,
                             cx.listener(move |this, _, window, cx| {
@@ -886,13 +883,10 @@ impl App {
                                         .gap_2()
                                         .flex_1()
                                         .child(
-                                            div()
-                                                .px_1()
-                                                .rounded(px(4.0))
-                                                .bg(method_color.opacity(0.1))
+                                            Tag::new()
+                                                .small()
+                                                .bg(method_color.opacity(0.15))
                                                 .text_color(method_color)
-                                                .text_xs()
-                                                .font_weight(FontWeight::BOLD)
                                                 .child(method_str),
                                         )
                                         .child(div().text_sm().child(name))
@@ -904,9 +898,11 @@ impl App {
                                         .gap_1()
                                         .child(
                                             div()
+                                                .id(ElementId::Name(format!("rename-{}", i).into()))
                                                 .p_1()
                                                 .rounded(px(4.0))
-                                                .hover(|s| s.bg(hsla(0.0, 0.0, 0.3, 0.5)))
+                                                .cursor_pointer()
+                                                .hover(|s| s.bg(cx.theme().accent.opacity(0.3)))
                                                 .on_mouse_down(
                                                     MouseButton::Left,
                                                     cx.listener(move |this, _, window, cx| {
@@ -914,10 +910,13 @@ impl App {
                                                         this.start_renaming(i, window, cx);
                                                     }),
                                                 )
+                                                .tooltip(|window, cx| {
+                                                    Tooltip::new("Rename").build(window, cx)
+                                                })
                                                 .child(
                                                     Icon::new(IconName::Settings)
                                                         .size(px(14.0))
-                                                        .text_color(hsla(0.0, 0.0, 0.6, 1.0)),
+                                                        .text_color(cx.theme().muted_foreground),
                                                 ),
                                         )
                                         .child(
@@ -927,7 +926,8 @@ impl App {
                                                 ))
                                                 .p_1()
                                                 .rounded(px(4.0))
-                                                .hover(|s| s.bg(hsla(0.0, 0.0, 0.3, 0.5)))
+                                                .cursor_pointer()
+                                                .hover(|s| s.bg(hsla(0.0, 0.6, 0.25, 0.3)))
                                                 .on_mouse_down(
                                                     MouseButton::Left,
                                                     cx.listener(move |this, _, window, cx| {
@@ -935,10 +935,13 @@ impl App {
                                                         this.delete_request(i, window, cx);
                                                     }),
                                                 )
+                                                .tooltip(|window, cx| {
+                                                    Tooltip::new("Delete").build(window, cx)
+                                                })
                                                 .child(
                                                     Icon::new(IconName::Delete)
                                                         .size(px(14.0))
-                                                        .text_color(hsla(0.0, 0.0, 0.6, 1.0)),
+                                                        .text_color(cx.theme().muted_foreground),
                                                 ),
                                         ),
                                 ),
@@ -956,17 +959,19 @@ impl App {
                         .justify_center()
                         .gap_2()
                         .p_4()
-                        .child(Icon::new(IconName::FolderOpen).text_color(hsla(0.0, 0.0, 0.3, 1.0)))
+                        .child(
+                            Icon::new(IconName::FolderOpen).text_color(cx.theme().muted_foreground),
+                        )
                         .child(
                             div()
                                 .text_sm()
-                                .text_color(hsla(0.0, 0.0, 0.4, 1.0))
+                                .text_color(cx.theme().foreground)
                                 .child("No requests"),
                         )
                         .child(
                             div()
                                 .text_xs()
-                                .text_color(hsla(0.0, 0.0, 0.3, 1.0))
+                                .text_color(cx.theme().muted_foreground)
                                 .child("Click folder icon to open"),
                         ),
                 )
@@ -999,7 +1004,11 @@ impl App {
                         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation()) // Prevent drag on controls
                         .child(
                             div()
+                                .id("sidebar-toggle")
                                 .cursor_pointer()
+                                .p_1()
+                                .rounded(px(4.0))
+                                .hover(|s| s.bg(cx.theme().accent.opacity(0.2)))
                                 .on_mouse_down(
                                     MouseButton::Left,
                                     cx.listener(|this, _, _, cx| {
@@ -1007,6 +1016,9 @@ impl App {
                                         cx.notify();
                                     }),
                                 )
+                                .tooltip(|window, cx| {
+                                    Tooltip::new("Toggle Sidebar").build(window, cx)
+                                })
                                 .child(
                                     Icon::new(if self.sidebar_visible {
                                         IconName::PanelLeftClose
@@ -1038,8 +1050,52 @@ impl App {
                             format!("Workspace: {}", folder_name)
                         }),
                 )
-                // Right Section: Version
-                .child(Badge::new().child("v0.1.0")),
+                // Right Section: Theme Toggle + Version
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .child(
+                            div()
+                                .id("theme-toggle")
+                                .cursor_pointer()
+                                .p_1()
+                                .rounded(px(4.0))
+                                .hover(|s| s.bg(cx.theme().accent.opacity(0.2)))
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|_this, _, window, cx| {
+                                        let is_dark = Theme::global(cx).is_dark();
+                                        let new_mode = if is_dark {
+                                            ThemeMode::Light
+                                        } else {
+                                            ThemeMode::Dark
+                                        };
+                                        Theme::change(new_mode, Some(window), cx);
+                                        cx.notify();
+                                    }),
+                                )
+                                .tooltip(|window, cx| {
+                                    let mode_text = if Theme::global(cx).is_dark() {
+                                        "Switch to Light Mode"
+                                    } else {
+                                        "Switch to Dark Mode"
+                                    };
+                                    Tooltip::new(mode_text).build(window, cx)
+                                })
+                                .child(
+                                    Icon::new(if cx.theme().mode.is_dark() {
+                                        IconName::Sun
+                                    } else {
+                                        IconName::Moon
+                                    })
+                                    .text_color(cx.theme().muted_foreground),
+                                ),
+                        )
+                        .child(Badge::new().child("v0.1.0")),
+                ),
         )
     }
 
@@ -1103,38 +1159,32 @@ impl App {
                     .items_center()
                     .gap_3()
                     .child(
-                        // Method selector button with icon
-                        div()
-                            .id("method-selector")
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .px_3()
-                            .py_2()
-                            .rounded(px(8.0))
+                        // Method selector with dropdown menu
+                        Button::new("method-selector")
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .child(
+                                        div()
+                                            .font_weight(FontWeight::BOLD)
+                                            .text_color(method_color)
+                                            .child(method_text),
+                                    )
+                                    .child(
+                                        Icon::new(IconName::ChevronDown)
+                                            .size(px(14.0))
+                                            .text_color(method_color.opacity(0.7)),
+                                    ),
+                            )
                             .bg(method_bg)
                             .border_1()
                             .border_color(method_color.opacity(0.3))
-                            .cursor_pointer()
-                            .hover(|s| s.bg(method_bg.opacity(0.8)))
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(move |this, _, _, cx| {
-                                    this.method = this.method.next();
-                                    cx.notify();
-                                }),
-                            )
-                            .child(
-                                div()
-                                    .font_weight(FontWeight::BOLD)
-                                    .text_sm()
-                                    .text_color(method_color)
-                                    .child(method_text),
-                            )
-                            .child(
-                                Icon::new(IconName::ChevronDown)
-                                    .text_color(method_color.opacity(0.7)),
-                            ),
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.method = this.method.next();
+                                cx.notify();
+                            })),
                     )
                     .child(
                         div()
@@ -1145,7 +1195,13 @@ impl App {
                             .bg(cx.theme().input)
                             .border_1()
                             .border_color(cx.theme().border)
-                            .child(Input::new(&self.url_input).appearance(false)),
+                            .child(
+                                Input::new(&self.url_input).appearance(false).prefix(
+                                    Icon::new(IconName::Globe)
+                                        .small()
+                                        .text_color(cx.theme().muted_foreground),
+                                ),
+                            ),
                     )
                     .child(
                         div()
@@ -1207,61 +1263,75 @@ impl App {
             .flex()
             .items_center()
             .px_4()
-            .bg(hsla(0.0, 0.0, 0.09, 1.0))
+            .bg(cx.theme().muted)
             .border_b_1()
-            .border_color(hsla(0.0, 0.0, 0.15, 1.0))
+            .border_color(cx.theme().border)
             .child(
                 TabBar::new("request-tabs")
+                    .pill()
+                    .selected_index(match active_tab {
+                        RequestTab::Params => 0,
+                        RequestTab::Headers => 1,
+                        RequestTab::Body => 2,
+                    })
+                    .on_click(cx.listener(|this, index, _, cx| {
+                        this.active_tab = match index {
+                            0 => RequestTab::Params,
+                            1 => RequestTab::Headers,
+                            _ => RequestTab::Body,
+                        };
+                        cx.notify();
+                    }))
                     .child(
-                        Tab::new()
-                            .selected(active_tab == RequestTab::Params)
-                            .child(div().flex().items_center().gap_2().child("Params").when(
-                                param_count > 0,
-                                |this| {
+                        Tab::new().child(
+                            h_flex()
+                                .items_center()
+                                .gap_2()
+                                .child(Icon::new(IconName::Search).size(px(14.0)))
+                                .child("Params")
+                                .when(param_count > 0, |this| {
                                     this.child(
                                         div()
                                             .px_1()
-                                            .rounded(px(4.0))
-                                            .bg(hsla(0.55, 0.5, 0.3, 1.0))
+                                            .py_0p5()
                                             .text_xs()
+                                            .bg(cx.theme().accent)
+                                            .text_color(cx.theme().accent_foreground)
+                                            .rounded_sm()
                                             .child(format!("{}", param_count)),
                                     )
-                                },
-                            ))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.active_tab = RequestTab::Params;
-                                cx.notify();
-                            })),
+                                }),
+                        ),
                     )
                     .child(
-                        Tab::new()
-                            .selected(active_tab == RequestTab::Headers)
-                            .child(div().flex().items_center().gap_2().child("Headers").when(
-                                header_count > 0,
-                                |this| {
+                        Tab::new().child(
+                            h_flex()
+                                .items_center()
+                                .gap_2()
+                                .child(Icon::new(IconName::Settings).size(px(14.0)))
+                                .child("Headers")
+                                .when(header_count > 0, |this| {
                                     this.child(
                                         div()
                                             .px_1()
-                                            .rounded(px(4.0))
-                                            .bg(hsla(0.12, 0.5, 0.3, 1.0))
+                                            .py_0p5()
                                             .text_xs()
+                                            .bg(cx.theme().accent)
+                                            .text_color(cx.theme().accent_foreground)
+                                            .rounded_sm()
                                             .child(format!("{}", header_count)),
                                     )
-                                },
-                            ))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.active_tab = RequestTab::Headers;
-                                cx.notify();
-                            })),
+                                }),
+                        ),
                     )
                     .child(
-                        Tab::new()
-                            .selected(active_tab == RequestTab::Body)
-                            .child("Body")
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.active_tab = RequestTab::Body;
-                                cx.notify();
-                            })),
+                        Tab::new().child(
+                            h_flex()
+                                .items_center()
+                                .gap_2()
+                                .child(Icon::new(IconName::File).size(px(14.0)))
+                                .child("Body"),
+                        ),
                     ),
             )
     }
@@ -1287,15 +1357,15 @@ impl App {
             .mb_2()
             .p_2()
             .rounded(px(6.0))
-            .bg(hsla(0.0, 0.0, 0.06, 1.0))
+            .bg(cx.theme().muted)
             .border_1()
-            .border_color(hsla(0.0, 0.0, 0.15, 1.0))
+            .border_color(cx.theme().border)
             .child(
                 div()
                     .flex_1()
                     .child(Input::new(&pair.key).appearance(false)),
             )
-            .child(div().text_color(hsla(0.0, 0.0, 0.3, 1.0)).child("="))
+            .child(div().text_color(cx.theme().muted_foreground).child("="))
             .child(
                 div()
                     .flex_1()
@@ -1351,13 +1421,47 @@ impl App {
                             .items_center()
                             .gap_2()
                             .mb_4()
-                            .child(Icon::new(IconName::Search).text_color(hsla(0.0, 0.0, 0.5, 1.0)))
+                            .child(
+                                Icon::new(IconName::Search).text_color(cx.theme().muted_foreground),
+                            )
                             .child(
                                 div()
                                     .text_xs()
-                                    .text_color(hsla(0.0, 0.0, 0.5, 1.0))
+                                    .text_color(cx.theme().muted_foreground)
                                     .child("Query parameters will be appended to the URL"),
                             ),
+                    )
+                    // Column headers
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_3()
+                            .mb_2()
+                            .px_2()
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .text_xs()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child("Key"),
+                            )
+                            .child(
+                                div()
+                                    .w(px(14.0))
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child(""),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .text_xs()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child("Value"),
+                            )
+                            .child(div().w(px(28.0))),
                     )
                     .children(rows)
                     .child(
@@ -1391,14 +1495,47 @@ impl App {
                             .gap_2()
                             .mb_4()
                             .child(
-                                Icon::new(IconName::Settings).text_color(hsla(0.0, 0.0, 0.5, 1.0)),
+                                Icon::new(IconName::Settings)
+                                    .text_color(cx.theme().muted_foreground),
                             )
                             .child(
                                 div()
                                     .text_xs()
-                                    .text_color(hsla(0.0, 0.0, 0.5, 1.0))
+                                    .text_color(cx.theme().muted_foreground)
                                     .child("HTTP headers to include in the request"),
                             ),
+                    )
+                    // Column headers
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_3()
+                            .mb_2()
+                            .px_2()
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .text_xs()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child("Header Name"),
+                            )
+                            .child(
+                                div()
+                                    .w(px(14.0))
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child(""),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .text_xs()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child("Value"),
+                            )
+                            .child(div().w(px(28.0))),
                     )
                     .children(rows)
                     .child(
@@ -1423,11 +1560,11 @@ impl App {
                         .items_center()
                         .gap_2()
                         .mb_4()
-                        .child(Icon::new(IconName::File).text_color(hsla(0.0, 0.0, 0.5, 1.0)))
+                        .child(Icon::new(IconName::File).text_color(cx.theme().muted_foreground))
                         .child(
                             div()
                                 .text_xs()
-                                .text_color(hsla(0.0, 0.0, 0.5, 1.0))
+                                .text_color(cx.theme().muted_foreground)
                                 .child("Request body for POST, PUT, PATCH requests"),
                         ),
                 )
@@ -1436,19 +1573,15 @@ impl App {
                         .flex_1()
                         .p_3()
                         .rounded(px(8.0))
-                        .bg(hsla(0.0, 0.0, 0.04, 1.0))
+                        .bg(cx.theme().muted)
                         .border_1()
-                        .border_color(hsla(0.0, 0.0, 0.15, 1.0))
+                        .border_color(cx.theme().border)
                         .child(Input::new(&self.body_input).appearance(false)),
                 )
                 .into_any_element(),
         };
 
-        div()
-            .flex_1()
-            .p_4()
-            .bg(hsla(0.0, 0.0, 0.07, 1.0))
-            .child(content)
+        div().flex_1().p_4().bg(cx.theme().muted).child(content)
     }
 
     fn render_response_panel(
@@ -1516,11 +1649,11 @@ impl App {
                             .px_2()
                             .py_1()
                             .rounded(px(6.0))
-                            .bg(hsla(0.0, 0.0, 0.15, 1.0))
+                            .bg(cx.theme().muted)
                             .child(
                                 div()
                                     .text_xs()
-                                    .text_color(hsla(0.0, 0.0, 0.6, 1.0))
+                                    .text_color(cx.theme().muted_foreground)
                                     .child(format!("{}ms", self.response_time.unwrap_or(0))),
                             ),
                     )
@@ -1532,7 +1665,7 @@ impl App {
                 .items_center()
                 .gap_2()
                 .text_sm()
-                .text_color(hsla(0.0, 0.0, 0.4, 1.0))
+                .text_color(cx.theme().muted_foreground)
                 .child(Icon::new(IconName::Info))
                 .child("Send a request to see the response")
                 .into_any_element()
@@ -1554,7 +1687,7 @@ impl App {
                         .id(ElementId::Name(format!("line-{}", i).into()))
                         .text_xs()
                         .font_family("monospace")
-                        .text_color(hsla(0.0, 0.0, 0.8, 1.0))
+                        .text_color(cx.theme().foreground)
                         .child(line_content)
                 })
                 .collect()
@@ -1565,7 +1698,7 @@ impl App {
             .flex()
             .flex_col()
             .min_h(px(200.0))
-            .bg(hsla(0.0, 0.0, 0.05, 1.0))
+            .bg(cx.theme().background)
             .child(Divider::horizontal())
             .child(
                 div()
@@ -1573,20 +1706,21 @@ impl App {
                     .items_center()
                     .justify_between()
                     .p_3()
-                    .bg(hsla(0.0, 0.0, 0.08, 1.0))
+                    .bg(cx.theme().muted)
                     .child(
                         div()
                             .flex()
                             .items_center()
                             .gap_2()
                             .child(
-                                Icon::new(IconName::ArrowDown).text_color(hsla(0.0, 0.0, 0.6, 1.0)),
+                                Icon::new(IconName::ArrowDown)
+                                    .text_color(cx.theme().muted_foreground),
                             )
                             .child(
                                 div()
                                     .text_sm()
                                     .font_weight(FontWeight::SEMIBOLD)
-                                    .text_color(hsla(0.0, 0.0, 0.8, 1.0))
+                                    .text_color(cx.theme().foreground)
                                     .child("Response"),
                             ),
                     )
@@ -1620,7 +1754,26 @@ impl App {
                             .child(status_badge),
                     ),
             )
-            .child(if response_too_large {
+            .child(if self.is_loading {
+                // Show loading spinner while request is in progress
+                div()
+                    .id("response-loading")
+                    .flex_1()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .justify_center()
+                    .gap_3()
+                    .bg(cx.theme().muted)
+                    .child(Spinner::new().color(cx.theme().primary))
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(cx.theme().muted_foreground)
+                            .child("Sending request..."),
+                    )
+                    .into_any_element()
+            } else if response_too_large {
                 let response_size = format_size(self.response_body.len());
                 div()
                     .id("response-scroll")
@@ -1631,22 +1784,19 @@ impl App {
                     .justify_center()
                     .gap_2()
                     .p_4()
-                    .bg(hsla(0.0, 0.0, 0.03, 1.0))
-                    .child(
-                        Icon::new(IconName::TriangleAlert)
-                            .text_color(hsla(0.12, 0.7, 0.5, 1.0)),
-                    )
+                    .bg(cx.theme().muted)
+                    .child(Icon::new(IconName::TriangleAlert).text_color(hsla(0.12, 0.7, 0.5, 1.0)))
                     .child(
                         div()
                             .text_sm()
                             .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(hsla(0.0, 0.0, 0.8, 1.0))
+                            .text_color(cx.theme().foreground)
                             .child("Response too large to display"),
                     )
                     .child(
                         div()
                             .text_xs()
-                            .text_color(hsla(0.0, 0.0, 0.6, 1.0))
+                            .text_color(cx.theme().muted_foreground)
                             .child(format!("Size: {}", response_size)),
                     )
                     .into_any_element()
@@ -1656,7 +1806,7 @@ impl App {
                     .flex_1()
                     .overflow_y_scrollbar()
                     .p_4()
-                    .bg(hsla(0.0, 0.0, 0.03, 1.0))
+                    .bg(cx.theme().muted)
                     .children(response_lines)
                     .into_any_element()
             })
