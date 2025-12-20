@@ -4,8 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [package.metadata.deb]
-copyright = "2024, API Client Developers"
-license-file = ["LICENSE", "4"]
+copyright = "2025, M1n-74316D65"
+license-file = "LICENSE"
 extended-description = """\
 A modern, high-performance API client built with Rust and GPUI."""
 depends = "$auto"
@@ -27,6 +27,13 @@ assets = [
         "usr/share/icons/hicolor/512x512/apps/api-client.png",
         "644",
     ],
+]
+
+[package.metadata.generate-rpm]
+assets = [
+    { source = "target/release/api-client", dest = "/usr/bin/api-client", mode = "755" },
+    { source = "build/linux/api-client.desktop", dest = "/usr/share/applications/api-client.desktop", mode = "644" },
+    { source = "assets/icon.png", dest = "/usr/share/icons/hicolor/512x512/apps/api-client.png", mode = "644" },
 ]
 
 [dependencies]
