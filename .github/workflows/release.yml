@@ -18,6 +18,11 @@ jobs:
         with:
           targets: aarch64-apple-darwin
 
+      - name: Rust Cache
+        uses: swatinem/rust-cache@v2
+        with:
+          key: macos-aarch64
+
       - name: Build
         run: cargo build --release --target aarch64-apple-darwin
 
@@ -82,6 +87,11 @@ jobs:
         with:
           targets: x86_64-pc-windows-msvc
 
+      - name: Rust Cache
+        uses: swatinem/rust-cache@v2
+        with:
+          key: windows-x86_64
+
       - name: Install ImageMagick
         run: choco install imagemagick
 
@@ -117,6 +127,11 @@ jobs:
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust Cache
+        uses: swatinem/rust-cache@v2
+        with:
+          key: linux-x86_64
 
       - name: Install Packaging Tools
         run: |
