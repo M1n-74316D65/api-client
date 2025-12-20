@@ -49,6 +49,7 @@ fn main() {
                     appears_transparent: true,
                     traffic_light_position: Some(gpui::point(px(8.0), px(8.0))),
                 }),
+                focus: true,
                 ..Default::default()
             };
             cx.open_window(options, |window, cx| {
