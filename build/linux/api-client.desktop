@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=API Client
+Comment=A modern API client for developers
+Exec=api-client
+Icon=api-client
+Terminal=false
+Type=Application
+Categories=Development;Utility;
+Keywords=Http;Rest;Client;
+StartupWMClass=api-client

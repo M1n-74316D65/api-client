@@ -3,6 +3,32 @@ name = "api-client"
 version = "0.1.0"
 edition = "2021"
 
+[package.metadata.deb]
+copyright = "2024, API Client Developers"
+license-file = ["LICENSE", "4"]
+extended-description = """\
+A modern, high-performance API client built with Rust and GPUI."""
+depends = "$auto"
+section = "utility"
+priority = "optional"
+assets = [
+    [
+        "target/release/api-client",
+        "usr/bin/",
+        "755",
+    ],
+    [
+        "build/linux/api-client.desktop",
+        "usr/share/applications/",
+        "644",
+    ],
+    [
+        "assets/icon.png",
+        "usr/share/icons/hicolor/512x512/apps/api-client.png",
+        "644",
+    ],
+]
+
 [dependencies]
 gpui = "0.2.2"
 gpui-component = "0.5.0"
@@ -15,3 +41,6 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 rfd = "0.15"
 dirs = "5.0"
+
+[build-dependencies]
+winres = "0.1"
