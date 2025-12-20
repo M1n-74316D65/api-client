@@ -2,6 +2,7 @@
 name = "api-client"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
 
 [package.metadata.deb]
 copyright = "2025, M1n-74316D65"
