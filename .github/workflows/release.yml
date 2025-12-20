@@ -151,6 +151,12 @@ jobs:
 
       - name: Build AppImage
         run: |
+          # Install ImageMagick for resizing
+          sudo apt-get install -y imagemagick
+
+          # Resize icon to 512x512 (max supported by linuxdeploy)
+          convert assets/icon.png -resize 512x512 assets/icon-512.png
+
           wget https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
           chmod +x linuxdeploy-x86_64.AppImage
 
@@ -160,9 +166,9 @@ jobs:
 
           cp target/release/api-client AppDir/usr/bin/
           cp build/linux/api-client.desktop AppDir/usr/share/applications/
-          cp assets/icon.png AppDir/usr/share/icons/hicolor/512x512/apps/api-client.png
+          cp assets/icon-512.png AppDir/usr/share/icons/hicolor/512x512/apps/api-client.png
 
-          ./linuxdeploy-x86_64.AppImage --appdir AppDir --output appimage --icon-file assets/icon.png --desktop-file build/linux/api-client.desktop
+          ./linuxdeploy-x86_64.AppImage --appdir AppDir --output appimage --icon-file assets/icon-512.png --desktop-file build/linux/api-client.desktop
 
       - name: Upload Release Asset
         uses: softprops/action-gh-release@v1
