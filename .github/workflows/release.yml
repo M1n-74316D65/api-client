@@ -49,16 +49,17 @@ jobs:
 
           # Create iconset and icns
           mkdir api-client.iconset
-          sips -z 16 16     assets/icon.png --out api-client.iconset/icon_16x16.png
-          sips -z 32 32     assets/icon.png --out api-client.iconset/icon_16x16@2x.png
-          sips -z 32 32     assets/icon.png --out api-client.iconset/icon_32x32.png
-          sips -z 64 64     assets/icon.png --out api-client.iconset/icon_32x32@2x.png
-          sips -z 128 128   assets/icon.png --out api-client.iconset/icon_128x128.png
-          sips -z 256 256   assets/icon.png --out api-client.iconset/icon_128x128@2x.png
-          sips -z 256 256   assets/icon.png --out api-client.iconset/icon_256x256.png
-          sips -z 512 512   assets/icon.png --out api-client.iconset/icon_256x256@2x.png
-          sips -z 512 512   assets/icon.png --out api-client.iconset/icon_512x512.png
-          iconutil -c icns api-client.iconset
+          sips -z 16 16     assets/icon.png --out api-client.iconset/icon_16x16.png -s format png
+          sips -z 32 32     assets/icon.png --out api-client.iconset/icon_16x16@2x.png -s format png
+          sips -z 32 32     assets/icon.png --out api-client.iconset/icon_32x32.png -s format png
+          sips -z 64 64     assets/icon.png --out api-client.iconset/icon_32x32@2x.png -s format png
+          sips -z 128 128   assets/icon.png --out api-client.iconset/icon_128x128.png -s format png
+          sips -z 256 256   assets/icon.png --out api-client.iconset/icon_128x128@2x.png -s format png
+          sips -z 256 256   assets/icon.png --out api-client.iconset/icon_256x256.png -s format png
+          sips -z 512 512   assets/icon.png --out api-client.iconset/icon_256x256@2x.png -s format png
+          sips -z 512 512   assets/icon.png --out api-client.iconset/icon_512x512.png -s format png
+          sips -z 1024 1024 assets/icon.png --out api-client.iconset/icon_512x512@2x.png -s format png
+          iconutil -c icns api-client.iconset --output api-client.icns
 
           mkdir -p api-client.app/Contents/Resources
           cp api-client.icns api-client.app/Contents/Resources/AppIcon.icns
@@ -112,7 +113,7 @@ jobs:
           sudo apt-get install -y \
             libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev protobuf-compiler \
             libfontconfig1-dev libfreetype6-dev libwayland-dev libx11-dev \
-            libvulkan-dev libasound2-dev
+            libvulkan-dev libasound2-dev libxkbcommon-x11-dev
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
