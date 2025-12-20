@@ -85,7 +85,7 @@ jobs:
         run: choco install imagemagick
 
       - name: Convert Icon
-        run: magick convert assets/icon.png assets/icon.ico
+        run: magick assets/icon.png -define icon:auto-resize=256,128,64,48,32,16 assets/icon.ico
 
       - name: Build
         run: cargo build --release --target x86_64-pc-windows-msvc
