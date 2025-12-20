@@ -2,8 +2,6 @@
 
 A modern, high-performance API client built with Rust and the [GPUI](https://www.gpui.rs/) framework. Designed for developers who need a fast, native tool for testing and debugging HTTP requests.
 
-![App Icon](assets/icon.png)
-
 ## Features
 
 - **Blazing Fast**: Native application built on GPUI for high performance and low latency.
