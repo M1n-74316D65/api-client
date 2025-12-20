@@ -3,6 +3,13 @@ name = "api-client"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
+description = "A modern, high-performance API client built with Rust and GPUI"
+authors = ["M1n-74316D65"]
+repository = "https://github.com/M1n-74316D65/api-client"
+homepage = "https://github.com/M1n-74316D65/api-client"
+readme = "README.md"
+keywords = ["api", "http", "client", "gpui", "rest"]
+categories = ["development-tools", "gui"]
 
 [package.metadata.deb]
 copyright = "2025, M1n-74316D65"
