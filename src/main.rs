@@ -2,6 +2,8 @@ use gpui::*;
 use gpui_component::*;
 
 mod app;
+mod components;
+mod git;
 use app::{
     App, CloseWindow, NewRequest, OpenFolder, SaveRequest, SendRequest, ToggleSidebar, ToggleTheme,
 };

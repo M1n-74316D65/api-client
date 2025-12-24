@@ -1,4 +1,4 @@
-use gpui::prelude::FluentBuilder;
+use gpui::prelude::*;
 use gpui::*;
 use gpui_component::badge::Badge;
 use gpui_component::button::{Button, ButtonVariants};
@@ -14,6 +14,9 @@ use gpui_component::tooltip::Tooltip;
 use gpui_component::*;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+
+use crate::components::git_panel::GitPanel;
+use crate::git::GitService;
 
 // Define keyboard actions
 actions!(
@@ -141,6 +144,12 @@ pub struct FileEntry {
     pub method: Option<HttpMethod>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SidebarTab {
+    Files,
+    Git,
+}
+
 pub struct App {
     url_input: Entity<InputState>,
     name_input: Entity<InputState>,
@@ -163,6 +172,11 @@ pub struct App {
     // Rename state
     rename_input: Entity<InputState>,
     renaming_index: Option<usize>,
+    // Git state
+    git_service: Option<std::rc::Rc<GitService>>,
+    git_panel: Entity<GitPanel>,
+    sidebar_tab: SidebarTab,
+    current_branch: Option<String>,
     _subscription: Subscription,
 }
 
@@ -212,7 +226,7 @@ impl App {
             Vec::new()
         };
 
-        let app = Self {
+        let mut app = Self {
             url_input,
             name_input,
             body_input,
@@ -233,12 +247,42 @@ impl App {
             selected_request: None,
             rename_input,
             renaming_index: None,
+            git_service: None,
+            git_panel: cx.new(|cx| GitPanel::new(window, cx)),
+            sidebar_tab: SidebarTab::Files,
+            current_branch: None,
             _subscription: cx.on_release(|_, cx| {
                 cx.quit();
             }),
         };
 
+        app.init_git(cx);
         app
+    }
+
+    fn init_git(&mut self, cx: &mut Context<Self>) {
+        if let Some(folder) = &self.current_folder {
+            if let Ok(service) = GitService::new(folder) {
+                self.git_service = Some(std::rc::Rc::new(service));
+                self.refresh_git_status(cx);
+            } else {
+                self.git_service = None;
+            }
+        }
+    }
+
+    fn refresh_git_status(&mut self, cx: &mut Context<Self>) {
+        if let Some(service) = &self.git_service {
+            if let Ok(branch) = service.get_current_branch() {
+                self.current_branch = Some(branch);
+            }
+            if let Ok(changes) = service.get_status() {
+                self.git_panel.update(cx, |panel, cx| {
+                    panel.set_changes(changes);
+                    cx.notify();
+                });
+            }
+        }
     }
 
     fn create_kv_pair(
@@ -759,19 +803,16 @@ impl App {
                     .border_color(cx.theme().sidebar_border)
                     .child(
                         div()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .child(Icon::new(IconName::FolderOpen).text_color(cx.theme().primary))
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .text_color(cx.theme().sidebar_foreground)
-                                    .child("Requests"),
-                            ),
+                            .text_sm()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(cx.theme().sidebar_foreground)
+                            .child(if self.sidebar_tab == SidebarTab::Files {
+                                "Requests"
+                            } else {
+                                "Git Changes"
+                            }),
                     )
-                    .child(
+                    .child(if self.sidebar_tab == SidebarTab::Files {
                         div()
                             .id("open-folder-btn")
                             .p_1()
@@ -789,8 +830,11 @@ impl App {
                             .child(
                                 Icon::new(IconName::FolderOpen)
                                     .text_color(cx.theme().sidebar_foreground),
-                            ),
-                    ),
+                            )
+                            .into_any_element()
+                    } else {
+                        div().into_any_element()
+                    }),
             )
             // Folder path
             .child(
@@ -803,186 +847,125 @@ impl App {
             )
             // File list
             // File list or Empty State
-            .child(if self.saved_requests.is_empty() {
-                let (message, sub_message, icon) = if self.current_folder.is_some() {
-                    (
-                        "No requests",
-                        "Create a new request to get started",
-                        IconName::File,
-                    )
+            .child(if self.sidebar_tab == SidebarTab::Files {
+                if self.saved_requests.is_empty() {
+                    let (message, sub_message, icon) = if self.current_folder.is_some() {
+                        (
+                            "No requests",
+                            "Create a new request to get started",
+                            IconName::File,
+                        )
+                    } else {
+                        (
+                            "No folder open",
+                            "Open a folder to see your requests",
+                            IconName::FolderOpen,
+                        )
+                    };
+
+                    div()
+                        .flex_1()
+                        .flex()
+                        .flex_col()
+                        .items_center()
+                        .justify_center()
+                        .gap_3()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(
+                            Icon::new(icon)
+                                .size(px(32.0))
+                                .text_color(cx.theme().muted_foreground.opacity(0.5)),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .items_center()
+                                .gap_1()
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .font_weight(FontWeight::MEDIUM)
+                                        .child(message),
+                                )
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(cx.theme().muted_foreground.opacity(0.7))
+                                        .child(sub_message),
+                                ),
+                        )
+                        .into_any_element()
                 } else {
-                    (
-                        "No folder open",
-                        "Open a folder to see your requests",
-                        IconName::FolderOpen,
-                    )
-                };
+                    div()
+                        .flex_1()
+                        .overflow_y_scrollbar()
+                        .children(self.saved_requests.iter().enumerate().map(|(i, entry)| {
+                            let is_selected = self.selected_request == Some(i);
+                            let method_color = entry
+                                .method
+                                .as_ref()
+                                .map(|m| m.color())
+                                .unwrap_or(cx.theme().muted_foreground);
+                            let method_str =
+                                entry.method.as_ref().map(|m| m.as_str()).unwrap_or("???");
+                            let name = entry.name.clone();
+                            let is_renaming = self.renaming_index == Some(i);
 
-                div()
-                    .flex_1()
-                    .flex()
-                    .flex_col()
-                    .items_center()
-                    .justify_center()
-                    .gap_3()
-                    .text_color(cx.theme().muted_foreground)
-                    .child(
-                        Icon::new(icon)
-                            .size(px(32.0))
-                            .text_color(cx.theme().muted_foreground.opacity(0.5)),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .items_center()
-                            .gap_1()
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .child(message),
-                            )
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(cx.theme().muted_foreground.opacity(0.7))
-                                    .child(sub_message),
-                            ),
-                    )
-                    .into_any_element()
-            } else {
-                div()
-                    .flex_1()
-                    .overflow_y_scrollbar()
-                    .children(self.saved_requests.iter().enumerate().map(|(i, entry)| {
-                        let is_selected = self.selected_request == Some(i);
-                        let method_color = entry
-                            .method
-                            .as_ref()
-                            .map(|m| m.color())
-                            .unwrap_or(cx.theme().muted_foreground);
-                        let method_str = entry.method.as_ref().map(|m| m.as_str()).unwrap_or("???");
-                        let name = entry.name.clone();
-                        let is_renaming = self.renaming_index == Some(i);
-
-                        div()
-                            .id(ElementId::Name(format!("request-{}", i).into()))
-                            .group("request-item")
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .px_3()
-                            .py(px(6.0)) // Tighter, refined spacing
-                            .cursor_pointer()
-                            .bg(if is_selected {
-                                cx.theme().accent.opacity(0.15)
-                            } else {
-                                gpui::transparent_black()
-                            })
-                            .hover(|s| s.bg(cx.theme().muted.opacity(0.5)))
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(move |this, _, window, cx| {
-                                    this.load_request(i, window, cx);
-                                }),
-                            )
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .justify_between()
-                                    .w_full()
-                                    .child(if is_renaming {
-                                        div()
-                                            .flex()
-                                            .items_center()
-                                            .gap_2()
-                                            .flex_1()
-                                            .child(div().flex_1().child(
-                                                Input::new(&self.rename_input).appearance(false),
-                                            ))
-                                            .child(
-                                                div()
-                                                    .cursor_pointer()
-                                                    .child(
-                                                        Icon::new(IconName::Check)
-                                                            .size(px(14.0))
-                                                            .text_color(cx.theme().primary),
-                                                    )
-                                                    .on_mouse_down(
-                                                        MouseButton::Left,
-                                                        cx.listener(move |this, _, window, cx| {
-                                                            cx.stop_propagation();
-                                                            this.confirm_renaming(window, cx);
-                                                        }),
+                            div()
+                                .id(ElementId::Name(format!("request-{}", i).into()))
+                                .group("request-item")
+                                .flex()
+                                .items_center()
+                                .gap_2()
+                                .px_3()
+                                .py(px(6.0)) // Tighter, refined spacing
+                                .cursor_pointer()
+                                .bg(if is_selected {
+                                    cx.theme().accent.opacity(0.15)
+                                } else {
+                                    gpui::transparent_black()
+                                })
+                                .hover(|s| s.bg(cx.theme().muted.opacity(0.5)))
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(move |this, _, window, cx| {
+                                        this.load_request(i, window, cx);
+                                    }),
+                                )
+                                .child(
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .justify_between()
+                                        .w_full()
+                                        .child(if is_renaming {
+                                            div()
+                                                .flex()
+                                                .items_center()
+                                                .gap_2()
+                                                .flex_1()
+                                                .child(
+                                                    div().flex_1().child(
+                                                        Input::new(&self.rename_input)
+                                                            .appearance(false),
                                                     ),
-                                            )
-                                            .child(
-                                                div()
-                                                    .cursor_pointer()
-                                                    .child(
-                                                        Icon::new(IconName::Close)
-                                                            .size(px(14.0))
-                                                            .text_color(hsla(0.0, 0.6, 0.4, 1.0)),
-                                                    )
-                                                    .on_mouse_down(
-                                                        MouseButton::Left,
-                                                        cx.listener(move |this, _, window, cx| {
-                                                            cx.stop_propagation();
-                                                            this.cancel_renaming(window, cx);
-                                                        }),
-                                                    ),
-                                            )
-                                    } else {
-                                        div()
-                                            .flex()
-                                            .items_center()
-                                            .gap_3()
-                                            .flex_1()
-                                            .child(
-                                                Tag::new()
-                                                    .small()
-                                                    .bg(method_color.opacity(0.15))
-                                                    .text_color(method_color)
-                                                    .child(method_str),
-                                            )
-                                            .child(
-                                                div()
-                                                    .text_sm()
-                                                    .overflow_hidden()
-                                                    .whitespace_nowrap()
-                                                    .text_ellipsis()
-                                                    .child(name),
-                                            )
-                                    })
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .items_center()
-                                            .gap_1()
-                                            .invisible()
-                                            .group_hover("request-item", |s| s.visible())
-                                            .when(!is_renaming, |this| {
-                                                this.child(
+                                                )
+                                                .child(
                                                     div()
-                                                        .p_1()
-                                                        .rounded_sm()
-                                                        .hover(|s| s.bg(cx.theme().muted))
+                                                        .cursor_pointer()
                                                         .child(
-                                                            Icon::new(IconName::Settings)
+                                                            Icon::new(IconName::Check)
                                                                 .size(px(14.0))
-                                                                .text_color(
-                                                                    cx.theme().muted_foreground,
-                                                                ),
+                                                                .text_color(cx.theme().primary),
                                                         )
                                                         .on_mouse_down(
                                                             MouseButton::Left,
                                                             cx.listener(
                                                                 move |this, _, window, cx| {
                                                                     cx.stop_propagation();
-                                                                    this.start_renaming(
-                                                                        i, window, cx,
+                                                                    this.confirm_renaming(
+                                                                        window, cx,
                                                                     );
                                                                 },
                                                             ),
@@ -990,32 +973,117 @@ impl App {
                                                 )
                                                 .child(
                                                     div()
-                                                        .p_1()
-                                                        .rounded_sm()
-                                                        .hover(|s| s.bg(hsla(0.0, 0.6, 0.4, 0.2)))
+                                                        .cursor_pointer()
                                                         .child(
-                                                            Icon::new(IconName::Delete)
+                                                            Icon::new(IconName::Close)
                                                                 .size(px(14.0))
-                                                                .text_color(
-                                                                    cx.theme().muted_foreground,
-                                                                ),
+                                                                .text_color(hsla(
+                                                                    0.0, 0.6, 0.4, 1.0,
+                                                                )),
                                                         )
                                                         .on_mouse_down(
                                                             MouseButton::Left,
                                                             cx.listener(
                                                                 move |this, _, window, cx| {
                                                                     cx.stop_propagation();
-                                                                    this.delete_request(
-                                                                        i, window, cx,
+                                                                    this.cancel_renaming(
+                                                                        window, cx,
                                                                     );
                                                                 },
                                                             ),
                                                         ),
                                                 )
-                                            }),
-                                    ),
-                            )
-                    }))
+                                        } else {
+                                            div()
+                                                .flex()
+                                                .items_center()
+                                                .gap_3()
+                                                .flex_1()
+                                                .child(
+                                                    Tag::new()
+                                                        .small()
+                                                        .bg(method_color.opacity(0.15))
+                                                        .text_color(method_color)
+                                                        .child(method_str),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .text_sm()
+                                                        .overflow_hidden()
+                                                        .whitespace_nowrap()
+                                                        .text_ellipsis()
+                                                        .child(name),
+                                                )
+                                        })
+                                        .child(
+                                            div()
+                                                .flex()
+                                                .items_center()
+                                                .gap_1()
+                                                .invisible()
+                                                .group_hover("request-item", |s| s.visible())
+                                                .when(!is_renaming, |this| {
+                                                    this.child(
+                                                        div()
+                                                            .p_1()
+                                                            .rounded_sm()
+                                                            .hover(|s| s.bg(cx.theme().muted))
+                                                            .child(
+                                                                Icon::new(IconName::Settings)
+                                                                    .size(px(14.0))
+                                                                    .text_color(
+                                                                        cx.theme().muted_foreground,
+                                                                    ),
+                                                            )
+                                                            .on_mouse_down(
+                                                                MouseButton::Left,
+                                                                cx.listener(
+                                                                    move |this, _, window, cx| {
+                                                                        cx.stop_propagation();
+                                                                        this.start_renaming(
+                                                                            i, window, cx,
+                                                                        );
+                                                                    },
+                                                                ),
+                                                            ),
+                                                    )
+                                                    .child(
+                                                        div()
+                                                            .p_1()
+                                                            .rounded_sm()
+                                                            .hover(|s| {
+                                                                s.bg(hsla(0.0, 0.6, 0.4, 0.2))
+                                                            })
+                                                            .child(
+                                                                Icon::new(IconName::Delete)
+                                                                    .size(px(14.0))
+                                                                    .text_color(
+                                                                        cx.theme().muted_foreground,
+                                                                    ),
+                                                            )
+                                                            .on_mouse_down(
+                                                                MouseButton::Left,
+                                                                cx.listener(
+                                                                    move |this, _, window, cx| {
+                                                                        cx.stop_propagation();
+                                                                        this.delete_request(
+                                                                            i, window, cx,
+                                                                        );
+                                                                    },
+                                                                ),
+                                                            ),
+                                                    )
+                                                }),
+                                        ),
+                                )
+                        }))
+                        .into_any_element()
+                }
+            } else {
+                div()
+                    .id("git-panel")
+                    .size_full()
+                    .child(self.git_panel.clone())
                     .into_any_element()
             })
     }
@@ -1953,9 +2021,14 @@ impl App {
             .child(Scrollbar::vertical(&self.scroll_handle))
     }
     fn render_status_bar(&self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let branch_name = self
+            .current_branch
+            .clone()
+            .unwrap_or_else(|| "No Repo".to_string());
+
         div()
             .w_full()
-            .h(px(24.0))
+            .h(px(28.0))
             .flex()
             .items_center()
             .justify_between()
@@ -1969,7 +2042,32 @@ impl App {
                 div()
                     .flex()
                     .items_center()
-                    .gap_2()
+                    .gap_3()
+                    .child(
+                        div()
+                            .cursor_pointer()
+                            .flex()
+                            .items_center()
+                            .gap_1()
+                            .hover(|s| s.text_color(cx.theme().foreground))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, _, _, cx| {
+                                    this.sidebar_tab = if this.sidebar_tab == SidebarTab::Git {
+                                        SidebarTab::Files
+                                    } else {
+                                        SidebarTab::Git
+                                    };
+                                    if this.sidebar_tab == SidebarTab::Git {
+                                        this.refresh_git_status(cx);
+                                    }
+                                    cx.notify();
+                                }),
+                            )
+                            .child(Icon::new(IconName::Globe).size(px(14.0)))
+                            .child(branch_name),
+                    )
+                    .child(Divider::vertical())
                     .child(if self.is_loading {
                         "Sending request..."
                     } else {
