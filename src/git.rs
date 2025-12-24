@@ -88,6 +88,7 @@ impl GitService {
         }
     }
 
+    #[allow(dead_code)]
     pub fn stage_file(&self, path: &Path) -> Result<()> {
         let mut index = self.repo.index()?;
         index.add_path(path)?;
@@ -95,6 +96,7 @@ impl GitService {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn unstage_file(&self, path: &Path) -> Result<()> {
         let head = self.repo.head()?.peel_to_commit()?;
         let path_str = path.to_str().context("Invalid path")?;
@@ -103,6 +105,7 @@ impl GitService {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn commit(&self, message: &str) -> Result<()> {
         let mut index = self.repo.index()?;
         let oid = index.write_tree()?;
