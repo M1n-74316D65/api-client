@@ -12,11 +12,14 @@ use gpui_component::tag::Tag;
 use gpui_component::theme::{ActiveTheme, Theme, ThemeMode};
 use gpui_component::tooltip::Tooltip;
 use gpui_component::*;
-use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 use crate::components::git_panel::GitPanel;
+use crate::config::AppConfig;
+use crate::fs;
 use crate::git::GitService;
+use crate::request;
+use crate::types::{FileEntry, HttpMethod, KeyValuePair, RequestTab, SavedRequest, SidebarTab};
 
 // Define keyboard actions
 actions!(
@@ -31,124 +34,6 @@ actions!(
         CloseWindow
     ]
 );
-
-/// Application configuration
-#[derive(Debug, Serialize, Deserialize, Default)]
-struct AppConfig {
-    last_opened_folder: Option<PathBuf>,
-}
-
-impl AppConfig {
-    fn path() -> PathBuf {
-        dirs::config_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("api-client")
-            .join("config.json")
-    }
-
-    fn load() -> Self {
-        let path = Self::path();
-        if let Ok(content) = std::fs::read_to_string(&path) {
-            serde_json::from_str(&content).unwrap_or_default()
-        } else {
-            Self::default()
-        }
-    }
-
-    fn save(&self) {
-        let path = Self::path();
-        if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        if let Ok(content) = serde_json::to_string_pretty(self) {
-            let _ = std::fs::write(path, content);
-        }
-    }
-}
-
-/// HTTP Methods supported by the client
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum HttpMethod {
-    Get,
-    Post,
-    Put,
-    Delete,
-    Patch,
-}
-
-impl HttpMethod {
-    fn as_str(&self) -> &'static str {
-        match self {
-            HttpMethod::Get => "GET",
-            HttpMethod::Post => "POST",
-            HttpMethod::Put => "PUT",
-            HttpMethod::Delete => "DELETE",
-            HttpMethod::Patch => "PATCH",
-        }
-    }
-
-    fn color(&self) -> Hsla {
-        match self {
-            HttpMethod::Get => hsla(0.35, 0.8, 0.45, 1.0), // Green
-            HttpMethod::Post => hsla(0.55, 0.8, 0.45, 1.0), // Blue
-            HttpMethod::Put => hsla(0.12, 0.8, 0.50, 1.0), // Orange
-            HttpMethod::Delete => hsla(0.0, 0.8, 0.50, 1.0), // Red
-            HttpMethod::Patch => hsla(0.75, 0.6, 0.55, 1.0), // Purple
-        }
-    }
-
-    fn next(&self) -> HttpMethod {
-        match self {
-            HttpMethod::Get => HttpMethod::Post,
-            HttpMethod::Post => HttpMethod::Put,
-            HttpMethod::Put => HttpMethod::Delete,
-            HttpMethod::Delete => HttpMethod::Patch,
-            HttpMethod::Patch => HttpMethod::Get,
-        }
-    }
-}
-
-/// Request tabs
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum RequestTab {
-    Params,
-    Headers,
-    Body,
-}
-
-/// Key-Value pair for params and headers
-#[derive(Clone)]
-pub struct KeyValuePair {
-    key: Entity<InputState>,
-    value: Entity<InputState>,
-    enabled: bool,
-}
-
-/// Saved request file format
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct SavedRequest {
-    pub name: String,
-    pub method: String,
-    pub url: String,
-    #[serde(default)]
-    pub headers: std::collections::HashMap<String, String>,
-    #[serde(default)]
-    pub body: String,
-}
-
-/// Sidebar file entry
-#[derive(Clone, Debug)]
-pub struct FileEntry {
-    pub name: String,
-    pub path: PathBuf,
-    pub method: Option<HttpMethod>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SidebarTab {
-    Files,
-    Git,
-}
 
 pub struct App {
     url_input: Entity<InputState>,
@@ -221,7 +106,7 @@ impl App {
         let config = AppConfig::load();
         let current_folder = config.last_opened_folder;
         let saved_requests = if let Some(folder) = &current_folder {
-            Self::scan_folder(folder)
+            fs::scan_folder(folder)
         } else {
             Vec::new()
         };
@@ -398,7 +283,7 @@ impl App {
 
         cx.spawn_in(window, async move |this, cx| {
             let start = std::time::Instant::now();
-            let result = Self::execute_request(&url, &method, &body, &headers).await;
+            let result = request::execute_request(&url, &method, &body, &headers).await;
             let elapsed = start.elapsed().as_millis();
 
             cx.update(|_window, cx| {
@@ -444,44 +329,6 @@ impl App {
         .detach();
     }
 
-    async fn execute_request(
-        url: &str,
-        method: &HttpMethod,
-        body: &str,
-        headers: &[(String, String)],
-    ) -> Result<(u16, String), String> {
-        let client = reqwest::Client::new();
-
-        let mut builder = match method {
-            HttpMethod::Get => client.get(url),
-            HttpMethod::Post => client.post(url),
-            HttpMethod::Put => client.put(url),
-            HttpMethod::Delete => client.delete(url),
-            HttpMethod::Patch => client.patch(url),
-        };
-
-        // Add headers
-        for (key, value) in headers {
-            builder = builder.header(key.as_str(), value.as_str());
-        }
-
-        // Add body for methods that support it
-        if !body.is_empty()
-            && matches!(
-                method,
-                HttpMethod::Post | HttpMethod::Put | HttpMethod::Patch
-            )
-        {
-            builder = builder.body(body.to_string());
-        }
-
-        let response = builder.send().await.map_err(|e| e.to_string())?;
-        let status = response.status().as_u16();
-        let text = response.text().await.map_err(|e| e.to_string())?;
-
-        Ok((status, text))
-    }
-
     /// Open folder dialog and load requests
     fn open_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         // Spawn async task to show folder picker
@@ -510,57 +357,13 @@ impl App {
         .detach();
     }
 
-    /// Scan folder for request files
-    fn scan_folder(folder: &PathBuf) -> Vec<FileEntry> {
-        let mut saved_requests = Vec::new();
-        if let Ok(entries) = std::fs::read_dir(folder) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_file() {
-                    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-                    if ext == "json" || ext == "yaml" || ext == "yml" {
-                        // Try to parse the method from the file
-                        let method = Self::parse_method_from_file(&path);
-                        let name = path
-                            .file_stem()
-                            .and_then(|n| n.to_str())
-                            .unwrap_or("Unknown")
-                            .to_string();
-
-                        saved_requests.push(FileEntry { name, path, method });
-                    }
-                }
-            }
-        }
-        // sort by name
-        saved_requests.sort_by(|a, b| a.name.cmp(&b.name));
-        saved_requests
-    }
-
     /// Load requests from current folder
     fn load_folder(&mut self, _cx: &mut Context<Self>) {
         if let Some(folder) = &self.current_folder {
-            self.saved_requests = Self::scan_folder(folder);
+            self.saved_requests = fs::scan_folder(folder);
         } else {
             self.saved_requests.clear();
         }
-    }
-
-    /// Parse HTTP method from a saved request file
-    fn parse_method_from_file(path: &PathBuf) -> Option<HttpMethod> {
-        if let Ok(content) = std::fs::read_to_string(path) {
-            if let Ok(request) = serde_json::from_str::<SavedRequest>(&content) {
-                return match request.method.to_uppercase().as_str() {
-                    "GET" => Some(HttpMethod::Get),
-                    "POST" => Some(HttpMethod::Post),
-                    "PUT" => Some(HttpMethod::Put),
-                    "DELETE" => Some(HttpMethod::Delete),
-                    "PATCH" => Some(HttpMethod::Patch),
-                    _ => None,
-                };
-            }
-        }
-        None
     }
 
     /// Save current request to file

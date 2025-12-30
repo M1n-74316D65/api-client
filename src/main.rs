@@ -3,7 +3,11 @@ use gpui_component::*;
 
 mod app;
 mod components;
+mod config;
+mod fs;
 mod git;
+mod request;
+mod types;
 use app::{
     App, CloseWindow, NewRequest, OpenFolder, SaveRequest, SendRequest, ToggleSidebar, ToggleTheme,
 };
